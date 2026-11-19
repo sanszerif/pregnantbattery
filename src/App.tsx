@@ -74,7 +74,13 @@ import {
 
 type TimeWindow = "all" | "12h" | "6h" | "3h" | "14d";
 type CardKey =
-  "health" | "cycles" | "thermals" | "standby" | "split" | "radio" | "bcl";
+  | "health"
+  | "cycles"
+  | "thermals"
+  | "standby"
+  | "split"
+  | "radio"
+  | "bcl";
 
 const BATTERY_CHART_CONFIG: ChartConfig = {
   level: { label: "Battery %", color: "var(--chart-1)" },
@@ -3075,8 +3081,7 @@ export default function App() {
                 pregnantBattery by sanszerif
               </span>
               <span className="text-muted-foreground hidden md:inline">
-                · Zero servers. Zero telemetry. Built because buying a new phone
-                for a tired battery is a scam.
+                · I don't need your goddamn data. Built because I'm lazy.
               </span>
             </div>
 
