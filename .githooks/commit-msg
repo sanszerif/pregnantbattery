@@ -1,0 +1,10 @@
+#!/bin/sh
+if command -v bun >/dev/null 2>&1; then
+  exec bun scripts/commitlint.ts "$1"
+fi
+
+if [ -x "$LOCALAPPDATA/Volta/tools/image/packages/bun/node_modules/bun/bin/bun.exe" ]; then
+  exec "$LOCALAPPDATA/Volta/tools/image/packages/bun/node_modules/bun/bin/bun.exe" scripts/commitlint.ts "$1"
+fi
+
+exec node --experimental-strip-types scripts/commitlint.ts "$1"
