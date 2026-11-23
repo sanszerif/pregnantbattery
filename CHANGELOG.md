@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.4.7-alpha (2026-11-23)
+
+- fix(thermalChassis): enabled mobile to render the viewport added inertia to the chassis, handle sticks to HUD now. added tests for testing.
+
 ## 0.4.6-alpha (2026-11-23)
 
 - Fixed 3D rear camera horizontal mirroring across all Pixel, Samsung, Xiaomi, Honor, and generic chassis models, and renamed 3D angle presets to `Iso / Back / Front`.
