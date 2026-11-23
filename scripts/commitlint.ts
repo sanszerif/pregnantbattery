@@ -10,7 +10,7 @@ export const ALLOWED_COMMIT_TYPES = [
 ] as const;
 
 const HEADER_RE = new RegExp(
-  `^(${ALLOWED_COMMIT_TYPES.join("|")})(?:\\([a-z0-9._-]+\\))?!?:\\s+\\S+`,
+  `^(${ALLOWED_COMMIT_TYPES.join("|")})(?:\\([A-Za-z0-9._/-]+\\))?!?:\\s+\\S+`,
 );
 
 export function validateCommitMessage(raw: string): {
