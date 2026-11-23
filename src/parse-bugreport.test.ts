@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { parseBugReport } from "./parse-bugreport";
 import { resolveDeviceProfile } from "./profiles";
 import { buildChassisEdges } from "./chassis-engine/geometry";
+import { computeHudLeaderPath } from "./chassis-engine/ThermalPhone3D";
 import { validateCommitMessage } from "../scripts/commitlint";
 import {
   computeLinearNextVersion,
@@ -215,6 +216,23 @@ test("resolves 2-layer model and brand profiles accurately", () => {
       edge.pts.length;
     expect(avgPx).toBeLessThan(225);
   }
+
+  // Smooth DOM-measured HUD leader line connects cleanly to exact HUD borders
+  const hud = { left: 10, right: 208, top: 10, bottom: 94 };
+  const below = computeHudLeaderPath({ x: 240, y: 210 }, hud);
+  expect(below).not.toBeNull();
+  expect(below?.endY).toBe(hud.bottom);
+  expect(below?.endX).toBeGreaterThanOrEqual(hud.left + 16);
+  expect(below?.endX).toBeLessThanOrEqual(hud.right - 16);
+  expect(below?.d).toContain(" C");
+
+  const right = computeHudLeaderPath({ x: 260, y: 52 }, hud);
+  expect(right).not.toBeNull();
+  expect(right?.endX).toBe(hud.right);
+  expect(right?.endY).toBeGreaterThanOrEqual(hud.top + 16);
+  expect(right?.endY).toBeLessThanOrEqual(hud.bottom - 16);
+
+  expect(computeHudLeaderPath({ x: 100, y: 50 }, hud)).toBeNull();
 });
 
 test("validates commitlint and semver bump rules", () => {

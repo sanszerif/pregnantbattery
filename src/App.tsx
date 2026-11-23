@@ -3025,7 +3025,7 @@ export default function App() {
                       Thermal sensors
                       <InfoTooltip
                         title="All Discovered Sensors"
-                        text="Sensors discovered from the device thermal HAL mapped across the 3D chassis on desktop or listed by throttling severity."
+                        text="Sensors discovered from the device thermal HAL mapped across the interactive 3D chassis or listed by throttling severity."
                       />
                     </CardTitle>
                     <CardDescription>
@@ -3034,7 +3034,7 @@ export default function App() {
                         : `${report.thermals.sensors.length} active sensors in dump snapshot`}
                     </CardDescription>
                     {report.thermals.sensors.length > 0 && (
-                      <CardAction className="hidden md:block">
+                      <CardAction>
                         <Tabs
                           value={thermalView}
                           onValueChange={(v) =>
@@ -3067,63 +3067,54 @@ export default function App() {
                           </p>
                         )}
                       </div>
+                    ) : thermalView === "3d" ? (
+                      <div className="flex flex-1 flex-col">
+                        <ThermalPhone3D
+                          sensors={report.thermals.sensors}
+                          chassis={report.device.profile.chassis}
+                        />
+                      </div>
                     ) : (
-                      <>
-                        {thermalView === "3d" && (
-                          <div className="hidden md:flex md:flex-1 md:flex-col">
-                            <ThermalPhone3D
-                              sensors={report.thermals.sensors}
-                              chassis={report.device.profile.chassis}
-                            />
-                          </div>
-                        )}
-                        <div
-                          className={`${thermalView === "3d" ? "md:hidden " : ""}max-h-[560px] overflow-y-auto rounded-sm border`}
-                        >
-                          <Table>
-                            <TableHeader className="bg-card/95 sticky top-0 z-10 backdrop-blur-xs">
-                              <TableRow>
-                                <TableHead>Sensor</TableHead>
-                                <TableHead className="text-right">
-                                  Temp
-                                </TableHead>
-                                <TableHead className="text-right">
-                                  Status
-                                </TableHead>
+                      <div className="max-h-[560px] overflow-y-auto rounded-sm border">
+                        <Table>
+                          <TableHeader className="bg-card/95 sticky top-0 z-10 backdrop-blur-xs">
+                            <TableRow>
+                              <TableHead>Sensor</TableHead>
+                              <TableHead className="text-right">Temp</TableHead>
+                              <TableHead className="text-right">
+                                Status
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {report.thermals.sensors.map((s) => (
+                              <TableRow key={s.name}>
+                                <TableCell className="max-w-[150px] whitespace-normal sm:max-w-[190px] sm:whitespace-nowrap">
+                                  <div className="flex flex-col overflow-hidden">
+                                    <span className="truncate font-medium">
+                                      {s.label}
+                                    </span>
+                                    <span className="text-muted-foreground truncate text-[11px]">
+                                      {s.type}
+                                      {s.peakC && s.peakC > s.currentC + 1
+                                        ? ` · peak ${s.peakC}°C`
+                                        : ""}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right font-mono">
+                                  {s.currentC}°C
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Badge variant={statusBadgeVariant(s.status)}>
+                                    {s.status}
+                                  </Badge>
+                                </TableCell>
                               </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {report.thermals.sensors.map((s) => (
-                                <TableRow key={s.name}>
-                                  <TableCell className="max-w-[150px] whitespace-normal sm:max-w-[190px] sm:whitespace-nowrap">
-                                    <div className="flex flex-col overflow-hidden">
-                                      <span className="truncate font-medium">
-                                        {s.label}
-                                      </span>
-                                      <span className="text-muted-foreground truncate text-[11px]">
-                                        {s.type}
-                                        {s.peakC && s.peakC > s.currentC + 1
-                                          ? ` · peak ${s.peakC}°C`
-                                          : ""}
-                                      </span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="text-right font-mono">
-                                    {s.currentC}°C
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    <Badge
-                                      variant={statusBadgeVariant(s.status)}
-                                    >
-                                      {s.status}
-                                    </Badge>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
                     )}
                   </CardContent>
                 </Card>

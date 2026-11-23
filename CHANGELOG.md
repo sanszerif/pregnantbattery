@@ -11,6 +11,7 @@
 - Self-hosted local `Product Sans` webfonts from `assets/` and added installable offline PWA support (`manifest.webmanifest`, PNG/maskable app icons, and build-time precaching Service Worker).
 - Automated `CHANGELOG.md` promotion (`## Unreleased` -> versioned release with commit-log fallback) in GitHub Actions and allowed mixed-case/path commit scopes (e.g. `feat(thermalChassis):`) in `scripts/commitlint.ts` and `scripts/bump-version.ts`.
 - Switched CI versioning to linear per-commit accumulation (`upgrade` resets `Y.Z` for major releases, `feat`/`huge` preserves patch `Z`, and `housekeep` replaces `chore`/`refac`), honoring manual `package.json` overrides and `[skip bump]` guards.
+- Enabled the 3D thermal chassis on mobile viewports, added frame-rate-independent rotational inertia and smooth preset easing for touch/mouse dragging, and replaced the hardcoded HUD connector with a DOM-measured smooth Bézier callout docked directly to the HUD border.
 
 ## 0.1.2-alpha
 
