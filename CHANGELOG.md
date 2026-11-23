@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Fixed 3D rear camera horizontal mirroring across all Pixel, Samsung, Xiaomi, Honor, and generic chassis models, and renamed 3D angle presets to `Iso / Back / Front`.
+- Updated device profile validation badges & tooltips (**Verified Lab Rat**, **Close Enough**, and orange **Mystery Brick**).
+- Upgraded Android 11–16 bugreport parsing (ZIP entry priority ignoring `dumpstate_board.txt`, Qualcomm µA current normalization, relative-offset `Battery History (`, Android 11 `Uid` & interleaved hardware subsystems, and authoritative `package` UID lookup).
+- Added graceful missing-telemetry UI states across all KPI cards, charts, attribution tables, and Thermal Sensors (including auto-selecting multi-day timeline when hourly history is absent and honest `N/A` states on legacy dumps like Nokia 3.2).
+- Self-hosted local `Product Sans` webfonts from `assets/` and added installable offline PWA support (`manifest.webmanifest`, PNG/maskable app icons, and build-time precaching Service Worker).
+- Automated `CHANGELOG.md` promotion (`## Unreleased` -> versioned release with commit-log fallback) in GitHub Actions and allowed mixed-case/path commit scopes (e.g. `feat(thermalChassis):`) in `scripts/commitlint.ts` and `scripts/bump-version.ts`.
+
 ## 0.1.2-alpha
 
 - Fixed Pixel 9a (`tegu`) thermal headroom `34282.5°` overflow by preferring public `thermalservice` HAL entries, parsing `getVirtualSensorInfo`, dropping `COUNT_THRESHOLD` math nodes, and enforcing physical °C bounds.

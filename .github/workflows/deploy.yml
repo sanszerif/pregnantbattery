@@ -26,7 +26,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -39,9 +39,10 @@ jobs:
           bun scripts/bump-version.ts
           if [ "$(cat "$GITHUB_OUTPUT" | grep '^bumped=' | cut -d= -f2)" = "true" ]; then
             NEW_VER="$(cat "$GITHUB_OUTPUT" | grep '^version=' | cut -d= -f2)"
+            bun fmt package.json CHANGELOG.md
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package.json
+            git add package.json CHANGELOG.md
             git commit -m "chore(release): bump version to v$NEW_VER"
             git push origin HEAD:main
             echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
