@@ -1,16 +1,16 @@
 import { readFileSync } from "node:fs";
 
 export const ALLOWED_COMMIT_TYPES = [
-  "fix",
+  "upgrade",
   "feat",
-  "ci",
   "huge",
-  "refac",
-  "chore",
+  "fix",
+  "ci",
+  "housekeep",
 ] as const;
 
 const HEADER_RE = new RegExp(
-  `^(${ALLOWED_COMMIT_TYPES.join("|")})(?:\\([A-Za-z0-9._/-]+\\))?!?:\\s+\\S+`,
+  `^(${ALLOWED_COMMIT_TYPES.join("|")})(?:\\([A-Za-z0-9._/-]+\\))?:\\s+\\S+`,
 );
 
 export function validateCommitMessage(raw: string): {

@@ -4,7 +4,7 @@ import { resolveDeviceProfile } from "./profiles";
 import { buildChassisEdges } from "./chassis-engine/geometry";
 import { validateCommitMessage } from "../scripts/commitlint";
 import {
-  computeHighestNextVersion,
+  computeLinearNextVersion,
   computeNextVersion,
   promoteChangelog,
 } from "../scripts/bump-version";
@@ -226,16 +226,22 @@ test("validates commitlint and semver bump rules", () => {
   ).toBe(true);
   expect(
     computeNextVersion("0.1.2-alpha", "feat(thermalChassis): add 3D engine"),
-  ).toBe("0.2.0-alpha");
+  ).toBe("0.2.2-alpha");
+  expect(validateCommitMessage("upgrade: v2 architecture overhaul").valid).toBe(
+    true,
+  );
   expect(validateCommitMessage("feat: add pixel 9a chassis").valid).toBe(true);
   expect(validateCommitMessage("huge: device profile architecture").valid).toBe(
     true,
   );
   expect(validateCommitMessage("ci: auto bump version").valid).toBe(true);
-  expect(validateCommitMessage("refac: extract chassis engine").valid).toBe(
+  expect(validateCommitMessage("housekeep: extract chassis engine").valid).toBe(
     true,
   );
-  expect(validateCommitMessage("chore: update docs").valid).toBe(true);
+  expect(validateCommitMessage("chore: update docs").valid).toBe(false);
+  expect(validateCommitMessage("refac: extract chassis").valid).toBe(false);
+  expect(validateCommitMessage("major: v2 release").valid).toBe(false);
+  expect(validateCommitMessage("feat!: breaking change").valid).toBe(false);
   expect(validateCommitMessage("random bad commit").valid).toBe(false);
 
   expect(computeNextVersion("0.1.2-alpha", "fix: tiny fix")).toBe(
@@ -245,38 +251,53 @@ test("validates commitlint and semver bump rules", () => {
     "0.1.3-alpha",
   );
   expect(computeNextVersion("0.1.2-alpha", "feat: new brand")).toBe(
-    "0.2.0-alpha",
+    "0.2.2-alpha",
   );
   expect(computeNextVersion("0.1.2-alpha", "huge: redesign")).toBe(
-    "0.2.0-alpha",
+    "0.2.2-alpha",
   );
-  expect(computeNextVersion("0.1.2-alpha", "refac: cleanup")).toBeNull();
-  expect(computeNextVersion("0.1.2-alpha", "chore: deps")).toBeNull();
+  expect(computeNextVersion("0.1.2-alpha", "upgrade: breaking release")).toBe(
+    "1.0.0-alpha",
+  );
+  expect(computeNextVersion("0.1.2-alpha", "housekeep: cleanup")).toBeNull();
+  expect(
+    computeNextVersion("0.1.2-alpha", "housekeep(release): bump"),
+  ).toBeNull();
   expect(computeNextVersion("0.1.2-alpha", "chore(release): bump")).toBeNull();
+  expect(
+    computeNextVersion("0.1.2-alpha", "fix: tiny tweak [skip bump]"),
+  ).toBeNull();
 
-  // Multi-commit bump evaluation (highest priority commit wins, single bump)
+  // Linear per-commit chronological replay across real c519bc8..4d5a1de sequence
   expect(
-    computeHighestNextVersion("0.1.2-alpha", [
+    computeLinearNextVersion("0.1.2-alpha", [
+      "huge(profiles): add 2-layer device profiling",
+      "feat(thermalChassis): add 3D wireframe engine",
+      "feat: added PWA support",
+      "fix(testing): fixed added device tests",
+      "fix(changelog): enhance automated promotion",
       "chore: housekeeping formatted code",
-      "fix(changelog): preserve entries",
-      "huge(profiles): add 2-layer profiling",
+      "ci: fixed canary build on bun lint",
+      "housekeep(versioning): switch to linear per-commit increments",
     ]),
-  ).toBe("0.2.0-alpha");
+  ).toBe("0.4.5-alpha");
   expect(
-    computeHighestNextVersion("0.1.2-alpha", [
-      "chore: cleanup",
-      "fix(thermal): clamp sensor",
-      "ci: use bun canary",
+    computeLinearNextVersion("0.1.2-alpha", [
+      "fix: patch before major",
+      "upgrade: v1 rewrite",
+      "feat: new dashboard",
+      "fix: follow-up fix",
     ]),
-  ).toBe("0.1.3-alpha");
+  ).toBe("1.1.1-alpha");
   expect(
-    computeHighestNextVersion("0.1.2-alpha", [
-      "refac: cleanup",
-      "chore: formatting",
+    computeLinearNextVersion("0.1.2-alpha", [
+      "housekeep: cleanup",
+      "housekeep(release): bump version to v0.1.2-alpha",
       "chore(release): bump version to v0.1.2-alpha",
+      "fix: skipped manual bump [skip bump]",
     ]),
   ).toBeNull();
-  expect(computeHighestNextVersion("0.1.2-alpha", [])).toBeNull();
+  expect(computeLinearNextVersion("0.1.2-alpha", [])).toBeNull();
 
   // Case 1: Promotes authored ## Unreleased notes cleanly above prior release
   const withNotes = [

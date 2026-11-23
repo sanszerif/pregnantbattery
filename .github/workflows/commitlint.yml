@@ -27,7 +27,7 @@ jobs:
           else
             RANGE="${{ github.event.before }}..${{ github.sha }}"
           fi
-          if echo "$RANGE" | grep -q '^0000000'; then
+          if echo "$RANGE" | grep -q '^0000000' || ! git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null; then
             RANGE="-n 1"
           fi
           while IFS= read -r sha; do

@@ -8,6 +8,7 @@
 - Added graceful missing-telemetry UI states across all KPI cards, charts, attribution tables, and Thermal Sensors (including auto-selecting multi-day timeline when hourly history is absent and honest `N/A` states on legacy dumps like Nokia 3.2).
 - Self-hosted local `Product Sans` webfonts from `assets/` and added installable offline PWA support (`manifest.webmanifest`, PNG/maskable app icons, and build-time precaching Service Worker).
 - Automated `CHANGELOG.md` promotion (`## Unreleased` -> versioned release with commit-log fallback) in GitHub Actions and allowed mixed-case/path commit scopes (e.g. `feat(thermalChassis):`) in `scripts/commitlint.ts` and `scripts/bump-version.ts`.
+- Switched CI versioning to linear per-commit accumulation (`upgrade` resets `Y.Z` for major releases, `feat`/`huge` preserves patch `Z`, and `housekeep` replaces `chore`/`refac`), honoring manual `package.json` overrides and `[skip bump]` guards.
 
 ## 0.1.2-alpha
 

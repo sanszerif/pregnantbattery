@@ -8,14 +8,18 @@ import { execFileSync } from "node:child_process";
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/;
 const TYPE_RE =
-  /^(fix|feat|ci|huge|refac|chore)(?:\([A-Za-z0-9._/-]+\))?!?:\s+/;
+  /^(upgrade|feat|huge|fix|ci|housekeep)(?:\([A-Za-z0-9._/-]+\))?:\s+/;
+const RELEASE_COMMIT_RE = /^(?:housekeep|chore)\(release\):/i;
+const SKIP_BUMP_RE = /\[skip[ -]bump\]/i;
 
 export function computeNextVersion(
   currentVersion: string,
   commitHeader: string,
 ): string | null {
   const header = commitHeader.trim();
-  if (!header || /^chore\(release\):/i.test(header)) return null;
+  if (!header || RELEASE_COMMIT_RE.test(header) || SKIP_BUMP_RE.test(header)) {
+    return null;
+  }
 
   const tm = TYPE_RE.exec(header);
   if (!tm) return null;
@@ -29,8 +33,11 @@ export function computeNextVersion(
   const suffix = vm[4] ?? "";
   const kind = tm[1];
 
+  if (kind === "upgrade") {
+    return `${major + 1}.0.0${suffix}`;
+  }
   if (kind === "feat" || kind === "huge") {
-    return `${major}.${minor + 1}.0${suffix}`;
+    return `${major}.${minor + 1}.${patch}${suffix}`;
   }
   if (kind === "fix" || kind === "ci") {
     return `${major}.${minor}.${patch + 1}${suffix}`;
@@ -39,28 +46,23 @@ export function computeNextVersion(
 }
 
 /**
- * Computes at most a single version bump across multiple commit headers since the
- * last release (`feat`/`huge` minor bump overrides `fix`/`ci` patch bump).
+ * Replays commit headers in chronological order (oldest -> newest) so `upgrade`
+ * resets minor/patch to 0.0 while `feat`/`huge` and `fix`/`ci` accumulate linearly.
  */
-export function computeHighestNextVersion(
+export function computeLinearNextVersion(
   currentVersion: string,
-  commitHeaders: string[],
+  commitHeadersChronological: string[],
 ): string | null {
-  let minorNext: string | null = null;
-  let patchNext: string | null = null;
-  for (const raw of commitHeaders) {
-    const header = raw.trim();
-    if (!header) continue;
-    const next = computeNextVersion(currentVersion, header);
-    if (!next) continue;
-    const tm = TYPE_RE.exec(header);
-    if (tm && (tm[1] === "feat" || tm[1] === "huge")) {
-      minorNext = minorNext ?? next;
-    } else {
-      patchNext = patchNext ?? next;
+  let cur = currentVersion.trim();
+  let changed = false;
+  for (const raw of commitHeadersChronological) {
+    const next = computeNextVersion(cur, raw);
+    if (next) {
+      cur = next;
+      changed = true;
     }
   }
-  return minorNext ?? patchNext;
+  return changed ? cur : null;
 }
 
 function escapeRegExp(s: string): string {
@@ -72,7 +74,11 @@ function formatFallbackCommits(commits: string[]): string {
   const bullets: string[] = [];
   for (const raw of commits) {
     const msg = raw.trim();
-    if (!msg || /^Merge\s+/i.test(msg) || /^chore\(release\):/i.test(msg)) {
+    if (
+      !msg ||
+      /^(?:Merge|Revert)\s+/i.test(msg) ||
+      RELEASE_COMMIT_RE.test(msg)
+    ) {
       continue;
     }
     if (seen.has(msg)) continue;
@@ -155,14 +161,15 @@ function getCommitsSinceLastVersionChange(): string[] {
       return [];
     }
     const logArgs = lastVersionSha
-      ? ["log", `${lastVersionSha}..HEAD`, "--pretty=%s"]
+      ? ["log", "--reverse", `${lastVersionSha}..HEAD`, "--pretty=%s"]
       : ["log", "-n", "1", "--pretty=%s"];
     const out = execFileSync("git", logArgs, { encoding: "utf8" });
     return out
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(
-        (l) => l && !/^Merge\s+/i.test(l) && !/^chore\(release\):/i.test(l),
+        (l) =>
+          l && !/^(?:Merge|Revert)\s+/i.test(l) && !RELEASE_COMMIT_RE.test(l),
       );
   } catch {
     return [];
@@ -193,7 +200,7 @@ if (import.meta.main) {
     process.exit(0);
   }
 
-  const next = computeHighestNextVersion(pkg.version, commits);
+  const next = computeLinearNextVersion(pkg.version, commits);
   if (!next) {
     console.log(
       `Unreleased commits do not trigger a version bump (staying at ${pkg.version}).`,
