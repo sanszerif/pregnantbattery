@@ -4,7 +4,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/;
 const TYPE_RE =
@@ -36,6 +36,31 @@ export function computeNextVersion(
     return `${major}.${minor}.${patch + 1}${suffix}`;
   }
   return null;
+}
+
+/**
+ * Computes at most a single version bump across multiple commit headers since the
+ * last release (`feat`/`huge` minor bump overrides `fix`/`ci` patch bump).
+ */
+export function computeHighestNextVersion(
+  currentVersion: string,
+  commitHeaders: string[],
+): string | null {
+  let minorNext: string | null = null;
+  let patchNext: string | null = null;
+  for (const raw of commitHeaders) {
+    const header = raw.trim();
+    if (!header) continue;
+    const next = computeNextVersion(currentVersion, header);
+    if (!next) continue;
+    const tm = TYPE_RE.exec(header);
+    if (tm && (tm[1] === "feat" || tm[1] === "huge")) {
+      minorNext = minorNext ?? next;
+    } else {
+      patchNext = patchNext ?? next;
+    }
+  }
+  return minorNext ?? patchNext;
 }
 
 function escapeRegExp(s: string): string {
@@ -107,35 +132,40 @@ export function promoteChangelog(
   return trimmed ? `${trimmed}\n\n${promoted}\n` : `${promoted}\n`;
 }
 
-function getCommitsSinceLastRelease(fallbackHeader: string): string[] {
+function getCommitsSinceLastVersionChange(): string[] {
   try {
-    const lastReleaseSha = execSync(
-      'git log -n 1 --grep="^chore(release):" --format=%H',
+    const lastVersionSha = execFileSync(
+      "git",
+      [
+        "log",
+        "-n",
+        "1",
+        "-G",
+        '"version":',
+        "--format=%H",
+        "--",
+        "package.json",
+      ],
       { encoding: "utf8" },
     ).trim();
-    const range = lastReleaseSha ? `${lastReleaseSha}..HEAD` : "";
-    if (!range) return [fallbackHeader];
-    const out = execSync(`git log ${range} --pretty=%s`, { encoding: "utf8" });
-    const lines = out
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    if (lastVersionSha && lastVersionSha === headSha) {
+      return [];
+    }
+    const logArgs = lastVersionSha
+      ? ["log", `${lastVersionSha}..HEAD`, "--pretty=%s"]
+      : ["log", "-n", "1", "--pretty=%s"];
+    const out = execFileSync("git", logArgs, { encoding: "utf8" });
+    return out
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(
         (l) => l && !/^Merge\s+/i.test(l) && !/^chore\(release\):/i.test(l),
       );
-    return lines.length > 0 ? lines : [fallbackHeader];
   } catch {
-    return [fallbackHeader];
-  }
-}
-
-function alreadyBumpedInLastCommit(): boolean {
-  try {
-    const diff = execSync("git diff HEAD~1 HEAD -- package.json", {
-      encoding: "utf8",
-    });
-    return /^\+\s*"version":/m.test(diff);
-  } catch {
-    return false;
+    return [];
   }
 }
 
@@ -150,23 +180,23 @@ if (import.meta.main) {
   const pkgPath = "package.json";
   const pkgRaw = readFileSync(pkgPath, "utf8");
   const pkg = JSON.parse(pkgRaw) as { version: string };
-  const commitMsg =
-    process.env.COMMIT_MESSAGE ||
-    execSync("git log -1 --pretty=%s", { encoding: "utf8" }).trim();
+  const commits = process.env.COMMIT_MESSAGE
+    ? [process.env.COMMIT_MESSAGE.trim()].filter(Boolean)
+    : getCommitsSinceLastVersionChange();
 
-  if (alreadyBumpedInLastCommit()) {
+  if (commits.length === 0) {
     console.log(
-      `package.json version already updated in HEAD (${pkg.version}); skipping CI bump.`,
+      `No unreleased commits since last package.json version change (staying at ${pkg.version}).`,
     );
     writeGhOutput("bumped", "false");
     writeGhOutput("version", pkg.version);
     process.exit(0);
   }
 
-  const next = computeNextVersion(pkg.version, commitMsg);
+  const next = computeHighestNextVersion(pkg.version, commits);
   if (!next) {
     console.log(
-      `Commit "${commitMsg}" does not trigger a version bump (staying at ${pkg.version}).`,
+      `Unreleased commits do not trigger a version bump (staying at ${pkg.version}).`,
     );
     writeGhOutput("bumped", "false");
     writeGhOutput("version", pkg.version);
@@ -185,7 +215,7 @@ if (import.meta.main) {
       rawChangelog,
       next,
       releaseDate,
-      getCommitsSinceLastRelease(commitMsg),
+      commits,
     );
     writeFileSync(changelogPath, updatedChangelog, "utf8");
     console.log(`Updated ${changelogPath} for ${next} (${releaseDate})`);

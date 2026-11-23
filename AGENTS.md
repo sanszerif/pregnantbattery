@@ -14,11 +14,12 @@ Client-side Android bugreport analyzer (`React 19` + `Vite` + `TypeScript` + `Bu
 - **Hybrid `CHANGELOG.md` workflow**:
   - Add concise user-facing bullets under `## Unreleased` in `CHANGELOG.md` when implementing features or fixes (skip for pure `chore:` / `refac:` housekeeping).
   - Do **not** manually create a versioned `## X.Y.Z-alpha` header for routine commits — GitHub Actions (`scripts/bump-version.ts`) automatically promotes `## Unreleased` to `## <NEW_VERSION> (YYYY-MM-DD)` when bumping `package.json` (or generates bullets from commits since the last release if `## Unreleased` is empty).
-- **Do NOT manually increment `package.json` version** for routine commits — GitHub Actions (`.github/workflows/deploy.yml` running `scripts/bump-version.ts`) automatically bumps the version on push to `main` based on commit headers:
+- **Do NOT manually increment `package.json` version** for routine commits — GitHub Actions (`.github/workflows/deploy.yml`, running on `bun-version: canary` after `verify` passes) evaluates all commits since the last `package.json` version bump via `scripts/bump-version.ts`:
   - `fix:` / `ci:` -> increments patch (`X.Y.(Z+1)-alpha`)
   - `feat:` / `huge:` -> increments minor & resets patch (`X.(Y+1).0-alpha`)
   - `refac:` / `chore:` -> no version bump
   - Major (`X.0.0-alpha`) -> manual-only when explicitly requested by the maintainer
+- **CI runtime**: Both workflows use `bun-version: canary` because `bun lint` requires Bun canary/1.4.4+.
 - Note: Do **not** remove `assets/bug_reports/` from `.gitignore`; local `.zip` bug reports are private test fixtures.
 
 ## Commit Format & Git Hooks

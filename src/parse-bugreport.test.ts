@@ -3,7 +3,11 @@ import { parseBugReport } from "./parse-bugreport";
 import { resolveDeviceProfile } from "./profiles";
 import { buildChassisEdges } from "./chassis-engine/geometry";
 import { validateCommitMessage } from "../scripts/commitlint";
-import { computeNextVersion, promoteChangelog } from "../scripts/bump-version";
+import {
+  computeHighestNextVersion,
+  computeNextVersion,
+  promoteChangelog,
+} from "../scripts/bump-version";
 import { buildServiceWorkerSource } from "../scripts/pwa-plugin";
 
 test("parses synthetic dumpstate covering edge cases cleanly", async () => {
@@ -249,6 +253,30 @@ test("validates commitlint and semver bump rules", () => {
   expect(computeNextVersion("0.1.2-alpha", "refac: cleanup")).toBeNull();
   expect(computeNextVersion("0.1.2-alpha", "chore: deps")).toBeNull();
   expect(computeNextVersion("0.1.2-alpha", "chore(release): bump")).toBeNull();
+
+  // Multi-commit bump evaluation (highest priority commit wins, single bump)
+  expect(
+    computeHighestNextVersion("0.1.2-alpha", [
+      "chore: housekeeping formatted code",
+      "fix(changelog): preserve entries",
+      "huge(profiles): add 2-layer profiling",
+    ]),
+  ).toBe("0.2.0-alpha");
+  expect(
+    computeHighestNextVersion("0.1.2-alpha", [
+      "chore: cleanup",
+      "fix(thermal): clamp sensor",
+      "ci: use bun canary",
+    ]),
+  ).toBe("0.1.3-alpha");
+  expect(
+    computeHighestNextVersion("0.1.2-alpha", [
+      "refac: cleanup",
+      "chore: formatting",
+      "chore(release): bump version to v0.1.2-alpha",
+    ]),
+  ).toBeNull();
+  expect(computeHighestNextVersion("0.1.2-alpha", [])).toBeNull();
 
   // Case 1: Promotes authored ## Unreleased notes cleanly above prior release
   const withNotes = [
