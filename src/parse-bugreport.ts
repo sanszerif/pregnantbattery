@@ -1,5 +1,8 @@
 // shortcut: supports standard 32-bit ZIP deflate-raw/stored entries (<4GB); upgrade to ZIP64 if adb bugreports exceed 4GB
 
+import type { ThermalCategory } from "./chassis-engine/types";
+import { resolveDeviceProfile, type ResolvedDeviceProfile } from "./profiles";
+
 export interface TimelinePoint {
   time: string;
   tsMs: number;
@@ -15,6 +18,8 @@ export interface ThermalSensor {
   name: string;
   label: string;
   type: string;
+  section: ThermalCategory;
+  isVirtual: boolean;
   currentC: number;
   peakC: number | null;
   status: string;
@@ -24,7 +29,7 @@ export interface DrainerItem {
   id: string;
   name: string;
   packageName: string;
-  kind: "app" | "system";
+  kind: "system" | "system-app" | "app";
   totalMah: number;
   screenOffMah: number;
   wakelockMs: number;
@@ -54,6 +59,13 @@ export interface BclModuleStat {
   totalThrottle: number;
 }
 
+export interface SignalQualityDistribution {
+  great: number;
+  good: number;
+  moderate: number;
+  poor: number;
+}
+
 export interface BugReportData {
   fileName: string;
   device: {
@@ -69,22 +81,27 @@ export interface BugReportData {
     ramGb: string;
     storageGb: string;
     ufsLifetimeUsedPct: number | null;
+    profile: ResolvedDeviceProfile;
   };
   health: {
     learnedMah: number | null;
     designMah: number | null;
     healthPct: number | null;
+    stateOfHealthPct: number | null;
     lostMah: number | null;
     cycleCount: number | null;
     status: string;
+    chargingState: string;
+    batteryHealth: string;
     technology: string;
-    verdict: "Good" | "Fair" | "Worn" | "Unknown";
+    verdict: "Great" | "Good" | "Fair" | "Worn" | "Unknown";
     levelPct: number;
     voltageMv: number;
     currentMa: number | null;
     tempC: number;
     chargingPolicy: string;
     manufacturedDate: string | null;
+    firstUseDate: string | null;
   };
   thermals: {
     overallStatus: number;
@@ -109,10 +126,14 @@ export interface BugReportData {
     screenOnMs: number;
     screenOnCount: number;
     screenOffMs: number;
+    screenOffUptimeMs: number;
+    deepDozeMs: number;
+    lightDozeMs: number;
     totalDischargeMah: number;
     screenOnDischargeMah: number;
     screenOffDischargeMah: number;
     deepDozeDischargeMah: number;
+    lightDozeDischargeMah: number;
     screenOnPctDrop: number;
     screenOffPctDrop: number;
     screenOnPctPerHr: number | null;
@@ -124,6 +145,18 @@ export interface BugReportData {
     wifiTxGb: string;
     wifiRxMb: string;
     wifiPoorSignalPct: number;
+    wifiScanMs: number;
+    wifiScanPct: number;
+    wifiDisconnPct: number;
+    wifiSignal: SignalQualityDistribution;
+    cellularDrainMah: number;
+    cellularTx: string;
+    cellularRx: string;
+    cellularActiveMs: number;
+    cellularActivePct: number;
+    cellularSignal: SignalQualityDistribution;
+    gpsDrainMah: number;
+    connectivityChanges: number;
     activeRateMahPerHr: number;
     idleRateMahPerHr: number;
     unattributedTotalMah: number;
@@ -146,10 +179,14 @@ const SYSTEM_UID_NAMES: Record<string, { name: string; pkg: string }> = {
   "0": { name: "Linux Kernel & Root", pkg: "kernel" },
   "1000": { name: "Android System", pkg: "android.system" },
   "1001": { name: "Phone & Cellular Radio", pkg: "com.android.phone" },
+  "1002": { name: "Bluetooth Stack", pkg: "com.android.bluetooth" },
+  "1027": { name: "NFC Service", pkg: "com.android.nfc" },
   "1041": { name: "Audio Server", pkg: "audioserver" },
   "1046": { name: "Media / Codec Server", pkg: "mediaserver" },
+  "1051": { name: "Netd / Network Daemon", pkg: "netd" },
   "1073": { name: "Network Stack", pkg: "com.android.networkstack" },
   "2000": { name: "ADB / USB Shell", pkg: "com.android.shell" },
+  "-5": { name: "Tethering / Hotspot", pkg: "tethering" },
 };
 
 const FRIENDLY_PKG_MAP: Record<string, string> = {
@@ -163,6 +200,7 @@ const FRIENDLY_PKG_MAP: Record<string, string> = {
   "com.android.chrome": "Chrome",
   "com.instagram.android": "Instagram",
   "com.facebook.katana": "Facebook",
+  "com.facebook.orca": "Messenger",
   "com.netflix.mediaclient": "Netflix",
   "com.viscouspot.gitsync": "GitSync",
   "com.sameerasw.essentials": "Essentials",
@@ -171,30 +209,131 @@ const FRIENDLY_PKG_MAP: Record<string, string> = {
   "com.google.android.apps.photos": "Google Photos",
   "com.google.android.apps.nbu.files": "Files by Google",
   "com.google.android.as": "Android System Intelligence",
+  "com.google.android.as.oss": "Private Compute Services",
+  "com.google.android.apps.turbo": "Device Health Services",
+  "com.google.android.GoogleCamera": "Pixel Camera",
   "com.google.android.contacts": "Google Contacts",
   "com.android.systemui": "System UI",
   "com.google.android.youtube": "YouTube",
   "com.spotify.music": "Spotify",
   "com.starlink.mobile": "Starlink",
+  "com.zhiliaoapp.musically": "TikTok",
+  "com.linkedin.android": "LinkedIn",
+  "com.microsoft.teams": "Microsoft Teams",
 };
 
-const SENSOR_LABELS: Record<string, { label: string; group: string }> = {
-  "VIRTUAL-SKIN": { label: "Outer Device Skin", group: "Body" },
-  "VIRTUAL-SKIN-CHARGE": { label: "Charging Surface", group: "Body" },
-  battery: { label: "Battery Cell", group: "Battery" },
-  qi_therm: { label: "Wireless Charging Coil", group: "Charging" },
-  gnss_tcxo_therm: { label: "GPS / GNSS Radio", group: "Radio" },
-  "cellular-emergency": { label: "Cellular Modem", group: "Radio" },
-  BIG: { label: "CPU Prime Cores (BIG)", group: "CPU" },
-  MID: { label: "CPU Performance Cores (MID)", group: "CPU" },
-  LITTLE: { label: "CPU Efficiency Cores (LITTLE)", group: "CPU" },
-  G3D: { label: "Graphics (GPU)", group: "GPU" },
-  TPU: { label: "Neural / AI Processor", group: "NPU" },
-  disp_therm: { label: "Display Panel", group: "Display" },
-  usb_pwr_therm: { label: "USB-C Power Port", group: "Charging" },
-  usb_pwr_therm2: { label: "USB-C Secondary Sensor", group: "Charging" },
-  quiet_therm: { label: "Rear Chassis Thermistor", group: "Body" },
-  neutral_therm: { label: "Mid-Frame Thermistor", group: "Body" },
+const SENSOR_LABELS: Record<
+  string,
+  { label: string; group: string; section: ThermalCategory }
+> = {
+  "VIRTUAL-SKIN": {
+    label: "Outer Device Skin",
+    group: "Body",
+    section: "body",
+  },
+  "VIRTUAL-SKIN-CHARGE": {
+    label: "Charging Surface",
+    group: "Body",
+    section: "usb",
+  },
+  "VIRTUAL-SKIN-CHARGE-WLC": {
+    label: "Wireless Charge Surface",
+    group: "Charging",
+    section: "coil",
+  },
+  "VIRTUAL-SKIN-DISPLAY": {
+    label: "Display Skin Zone",
+    group: "Display",
+    section: "display",
+  },
+  "VIRTUAL-SKIN-SPEAKER": {
+    label: "Speaker Thermal Zone",
+    group: "Speaker",
+    section: "speaker",
+  },
+  battery: { label: "Battery Cell", group: "Battery", section: "battery" },
+  qi_therm: {
+    label: "Wireless Charging Coil",
+    group: "Charging",
+    section: "coil",
+  },
+  gnss_tcxo_therm: {
+    label: "GPS / GNSS Radio",
+    group: "Radio",
+    section: "radio",
+  },
+  "cellular-emergency": {
+    label: "Cellular Modem",
+    group: "Radio",
+    section: "radio",
+  },
+  rfpa_therm: { label: "RF Power Amplifier", group: "Radio", section: "radio" },
+  BIG: { label: "CPU Prime Cores (BIG)", group: "CPU", section: "cpu" },
+  MID: { label: "CPU Performance Cores (MID)", group: "CPU", section: "cpu" },
+  LITTLE: {
+    label: "CPU Efficiency Cores (LITTLE)",
+    group: "CPU",
+    section: "cpu",
+  },
+  G3D: { label: "Graphics (GPU)", group: "GPU", section: "gpu" },
+  TPU: { label: "Neural / AI Processor", group: "NPU", section: "gpu" },
+  soc_therm: { label: "SoC Die", group: "CPU", section: "cpu" },
+  disp_therm: { label: "Display Panel", group: "Display", section: "display" },
+  usb_pwr_therm: {
+    label: "USB-C Power Port",
+    group: "Charging",
+    section: "usb",
+  },
+  usb_pwr_therm2: {
+    label: "USB-C Secondary Sensor",
+    group: "Charging",
+    section: "usb",
+  },
+  charging_therm: { label: "Charging IC", group: "Charging", section: "usb" },
+  btmspkr_therm: {
+    label: "Bottom Speaker",
+    group: "Speaker",
+    section: "speaker",
+  },
+  quiet_therm: {
+    label: "Rear Chassis Thermistor",
+    group: "Body",
+    section: "body",
+  },
+  neutral_therm: {
+    label: "Mid-Frame Thermistor",
+    group: "Body",
+    section: "body",
+  },
+  north_therm: {
+    label: "Upper Frame Thermistor",
+    group: "Body",
+    section: "body",
+  },
+  // Samsung SDHMS SIOP:: tokens
+  SIOP_AP: { label: "Application Processor", group: "CPU", section: "cpu" },
+  SIOP_AP2: { label: "AP Secondary", group: "CPU", section: "cpu" },
+  SIOP_BAT: { label: "Battery Cell", group: "Battery", section: "battery" },
+  SIOP_USB: { label: "USB Port", group: "Charging", section: "usb" },
+  SIOP_CHG: { label: "Charging IC", group: "Charging", section: "usb" },
+  SIOP_DC: { label: "Direct Charger IC", group: "Charging", section: "usb" },
+  SIOP_PA: { label: "Cellular PA / Modem", group: "Radio", section: "radio" },
+  SIOP_SKIN: { label: "Device Skin", group: "Body", section: "body" },
+  SIOP_SKINF: {
+    label: "Front Display Skin",
+    group: "Display",
+    section: "display",
+  },
+  SIOP_SKINB: { label: "Rear Chassis Skin", group: "Body", section: "body" },
+  SIOP_WIFI2: { label: "Wi-Fi Radio", group: "Radio", section: "radio" },
+  SIOP_MEM2: { label: "DRAM Package", group: "CPU", section: "cpu" },
+  SIOP_UPSPK: { label: "Upper Speaker", group: "Speaker", section: "speaker" },
+  SIOP_DNSPK: { label: "Bottom Speaker", group: "Speaker", section: "speaker" },
+  SIOP_RCV2: {
+    label: "Earpiece Receiver",
+    group: "Speaker",
+    section: "speaker",
+  },
 };
 
 const HAL_TYPE_NAMES: Record<number, string> = {
@@ -203,10 +342,17 @@ const HAL_TYPE_NAMES: Record<number, string> = {
   2: "Battery",
   3: "Body",
   4: "USB Port",
-  5: "Modem",
+  5: "Radio",
   6: "BCL",
   7: "NPU",
+  8: "Radio",
   9: "NPU",
+  10: "Radio",
+  11: "Display",
+  12: "Speaker",
+  13: "Camera",
+  14: "Flashlight",
+  15: "CPU",
 };
 
 const THERMAL_STATUS_NAMES = [
@@ -218,6 +364,7 @@ const THERMAL_STATUS_NAMES = [
   "EMERGENCY",
   "SHUTDOWN",
 ];
+
 const THROTTLE_RANK: Record<string, number> = {
   SHUTDOWN: 6,
   EMERGENCY: 5,
@@ -243,6 +390,7 @@ const SUBSYSTEM_LABELS: Record<string, string> = {
   audio: "Audio Subsystem",
   cpu: "Processor (CPU)",
   screen: "Display Screen",
+  idle: "Phone Idle",
   wakelock: "Background Wakelocks",
   mobile_radio: "Cellular Modem",
   camera: "Camera Hardware",
@@ -255,12 +403,52 @@ const SUBSYSTEM_LABELS: Record<string, string> = {
   TPU: "AI / NPU Accelerator",
 };
 
+const LEGACY_SUBSYSTEM_MAP: Record<string, string> = {
+  screen: "screen",
+  "cell standby": "mobile_radio",
+  idle: "idle",
+  wifi: "wifi",
+  bluetooth: "bluetooth",
+  "phone calls": "phone",
+  "ambient display": "ambient_display",
+  camera: "camera",
+  audio: "audio",
+  video: "video",
+};
+
 const BATTERY_SERVICE_STATUS: Record<number, string> = {
   1: "UNKNOWN",
   2: "CHARGING",
   3: "DISCHARGING",
   4: "NOT_CHARGING",
   5: "FULL",
+};
+
+const BATTERY_CHARGING_POLICY: Record<number, string> = {
+  0: "INVALID",
+  1: "DEFAULT",
+  2: "LONG_LIFE",
+  3: "ADAPTIVE",
+  4: "FORCE_FULL_CHARGE",
+};
+
+const BATTERY_CHARGING_STATE: Record<number, string> = {
+  0: "INVALID",
+  1: "NORMAL",
+  2: "TOO_COLD",
+  3: "TOO_HOT",
+  4: "LONG_LIFE",
+  5: "ADAPTIVE",
+};
+
+const BATTERY_HEALTH_CODES: Record<number, string> = {
+  1: "UNKNOWN",
+  2: "GOOD",
+  3: "OVERHEAT",
+  4: "DEAD",
+  5: "OVER_VOLTAGE",
+  6: "UNSPECIFIED_FAILURE",
+  7: "COLD",
 };
 
 const BCL_MODULE_LABELS: Record<string, string> = {
@@ -325,28 +513,85 @@ function titleCase(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+function formatYyyymmdd(raw: string): string | null {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(raw.trim());
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+function classifySensorSection(name: string, group: string): ThermalCategory {
+  const n = name.toLowerCase();
+  const g = group.toLowerCase();
+  if (
+    g === "cpu" ||
+    /\b(big|mid|little)\b|soc|ap_?therm|tsens|cpu|mem\d*$|dram/.test(n)
+  ) {
+    return "cpu";
+  }
+  if (g === "gpu" || g === "npu" || /g3d|gpu|tpu|npu|isp|aur/.test(n)) {
+    return "gpu";
+  }
+  if (g === "battery" || n === "battery" || /\bbat\b/.test(n)) {
+    return "battery";
+  }
+  if (/qi|wlc|wireless/.test(n)) return "coil";
+  if (
+    g === "usb port" ||
+    g === "usb_port" ||
+    /usb|chg|charg|pmic|dc\b/.test(n)
+  ) {
+    return "usb";
+  }
+  if (g === "display" || /disp|panel|skinf/.test(n)) return "display";
+  if (
+    g === "radio" ||
+    g === "modem" ||
+    g === "power_amplifier" ||
+    /rfpa|pa\b|cell|modem|gnss|wifi|wlan/.test(n)
+  ) {
+    return "radio";
+  }
+  if (g === "speaker" || /spkr|speaker|upspk|dnspk|rcv/.test(n)) {
+    return "speaker";
+  }
+  return "body";
+}
+
 function friendlySensorLabel(
   name: string,
   rawType: string,
-): { label: string; group: string } {
+): { label: string; group: string; section: ThermalCategory } {
   if (SENSOR_LABELS[name]) return SENSOR_LABELS[name];
   const lower = name.toLowerCase();
   const group =
     rawType && rawType !== "UNKNOWN" && rawType !== "-1"
       ? titleCase(rawType.toLowerCase().replace(/_/g, " "))
-      : lower.includes("cpu") || lower.includes("soc")
+      : lower.includes("cpu") ||
+          lower.includes("soc") ||
+          lower.includes("tsens")
         ? "CPU"
-        : lower.includes("gpu")
+        : lower.includes("gpu") || lower.includes("tpu")
           ? "GPU"
           : lower.includes("bat")
             ? "Battery"
-            : lower.includes("skin")
-              ? "Body"
-              : lower.includes("usb") ||
-                  lower.includes("chg") ||
-                  lower.includes("qi")
-                ? "Charging"
-                : "Other";
+            : lower.includes("disp")
+              ? "Display"
+              : lower.includes("spkr") || lower.includes("speaker")
+                ? "Speaker"
+                : lower.includes("rf") ||
+                    lower.includes("modem") ||
+                    lower.includes("wifi")
+                  ? "Radio"
+                  : lower.includes("usb") ||
+                      lower.includes("chg") ||
+                      lower.includes("charg") ||
+                      lower.includes("qi")
+                    ? "Charging"
+                    : lower.includes("skin") ||
+                        lower.includes("quiet") ||
+                        lower.includes("north")
+                      ? "Body"
+                      : "Other";
+
   const cleaned = name
     .replace(/^VIRTUAL-/i, "")
     .replace(/[_-]+/g, " ")
@@ -355,7 +600,8 @@ function friendlySensorLabel(
     .split(/\s+/)
     .map((w) => (w.length <= 3 ? w.toUpperCase() : titleCase(w.toLowerCase())))
     .join(" ");
-  return { label: cleaned || name, group };
+  const section = classifySensorSection(name, group);
+  return { label: cleaned || name, group, section };
 }
 
 function friendlyAppName(pkg: string, uid?: string): string {
@@ -455,6 +701,7 @@ async function openBugreportByteStream(
     compSize: number;
     uncompSize: number;
     localOffset: number;
+    priority: number;
   } | null = null;
   let pos = 0;
   while (pos + 46 <= cdBytes.length) {
@@ -468,21 +715,27 @@ async function openBugreportByteStream(
     const localOffset = cdView.getUint32(pos + 42, true);
     const name = utf8.decode(cdBytes.subarray(pos + 46, pos + 46 + nameLen));
 
-    const isMainBugreport = /(?:^|\/)bugreport-.*\.txt$/i.test(name);
-    const isTxt = name.toLowerCase().endsWith(".txt");
-    if (isMainBugreport) {
-      best = { name, method, compSize, uncompSize, localOffset };
-      break;
-    }
-    if (isTxt && (!best || uncompSize > best.uncompSize)) {
-      best = { name, method, compSize, uncompSize, localOffset };
+    const priority = /(?:^|\/)bugreport-.*\.txt$/i.test(name)
+      ? 3
+      : /(?:^|\/)dumpstate(?:-\d[\d-]*)?\.txt$/i.test(name)
+        ? 2
+        : name.toLowerCase().endsWith(".txt")
+          ? 1
+          : 0;
+    if (
+      priority > 0 &&
+      (!best ||
+        priority > best.priority ||
+        (priority === best.priority && uncompSize > best.uncompSize))
+    ) {
+      best = { name, method, compSize, uncompSize, localOffset, priority };
     }
     pos += 46 + nameLen + extraLen + commentLen;
   }
 
   if (!best)
     throw new Error(
-      "Found a ZIP file, but zero bugreport-*.txt dumps inside it.",
+      "Found a ZIP file, but zero bugreport-*.txt or dumpstate.txt dumps inside it.",
     );
 
   const lhBuf = await file
@@ -528,6 +781,10 @@ type Section =
   | "battery"
   | "batterystats"
   | "audiopolicy"
+  | "package"
+  | "role"
+  | "syslog"
+  | "ufs_lt"
   | "skip";
 type BsSub =
   | "history"
@@ -539,6 +796,14 @@ type BsSub =
   | "wakelocks"
   | "uids"
   | "skip";
+
+interface PkgInfo {
+  pkg: string;
+  isSystem: boolean;
+  isPrivileged: boolean;
+  isPersistent: boolean;
+  isSystemPartition: boolean;
+}
 
 export async function parseBugReport(
   file: Blob & { name?: string },
@@ -564,26 +829,39 @@ export async function parseBugReport(
   let ramGb = "";
   let storageGb = "";
   let ufsLifetimeUsedPct: number | null = null;
+  let secUfsLt: number | null = null;
   let propMarketName = "";
   let propModel = "";
   let propBrand = "";
   let propManufacturer = "";
   let propDevice = "";
 
-  // Health (IHealth + battery service fallback)
+  // Health (IHealth + battery service fallback + OEM extras)
   let learnedMah: number | null = null;
   let estimatedMah: number | null = null;
   let designMah: number | null = null;
   let cycleCount: number | null = null;
+  let stateOfHealthPct: number | null = null;
   let healthStatus = "UNKNOWN";
+  let chargingState = "NORMAL";
+  let batteryHealth = "GOOD";
   let technology = "Li-ion";
   let levelPct = 0;
   let voltageMv = 0;
-  let currentMa: number | null = null;
+  let rawHealthCurrentUa: number | null = null;
+  let svcCurrentMa: number | null = null;
   let tempC = 0;
   let chargingPolicy = "DEFAULT";
   let manufacturedDate: string | null = null;
+  let firstUseDate: string | null = null;
   let svcChargeCounterMah = 0;
+
+  // Samsung battery service extras (resolved only if profile enables samsungBatteryExtras)
+  let secAsoc: number | null = null;
+  let secBatteryUsage: number | null = null;
+  let secProtectMode: number | null = null;
+  let secCalDate: string | null = null;
+  let secFirstUseDate: string | null = null;
 
   // Thermals & BCL
   let thermalSub = "";
@@ -592,6 +870,10 @@ export async function parseBugReport(
     { type: string; value: number; status: string }
   >();
   const cachedTempMap = new Map<string, number>();
+  const thermalServiceNames = new Set<string>();
+  const virtualSensorNames = new Set<string>();
+  const countThresholdNames = new Set<string>();
+  let curVirtualSensor = "";
   let overallThermalStatus = 0;
   let preRebootTempC: number | null = null;
   let preRebootTime: string | null = null;
@@ -599,16 +881,56 @@ export async function parseBugReport(
   let inKernelBcl = false;
   const rawBclModules: BclModuleStat[] = [];
 
+  // Samsung SIOP:: syslog snapshot
+  const siopTempMap = new Map<string, { currentC: number; peakC: number }>();
+
   // Audio policy active recording clients
   let inAudioRecord = false;
   let pendingAudioClient: { uid: string; source: string } | null = null;
   const rawAudioClients: { uid: string; source: string }[] = [];
+
+  // Package & Role metadata for automatic system vs app classification
+  let inPackages = false;
+  let curPkgName = "";
+  let curPkgAppId: number | null = null;
+  let curPkgSystem = false;
+  let curPkgPriv = false;
+  let curPkgPers = false;
+  let curPkgSysPart = false;
+  let curPkgDataPath = false;
+  const appIdPkgMap = new Map<number, PkgInfo>();
+  let curRoleIsSystem = false;
+  const systemRolePkgs = new Set<string>();
+
+  const flushCurPkg = () => {
+    if (!curPkgName || curPkgAppId === null) return;
+    const prev = appIdPkgMap.get(curPkgAppId);
+    if (!prev) {
+      appIdPkgMap.set(curPkgAppId, {
+        pkg: curPkgName,
+        isSystem: curPkgSystem,
+        isPrivileged: curPkgPriv,
+        isPersistent: curPkgPers,
+        isSystemPartition: curPkgSysPart,
+      });
+    } else {
+      appIdPkgMap.set(curPkgAppId, {
+        pkg: curPkgDataPath && !prev.pkg.includes(".") ? curPkgName : prev.pkg,
+        isSystem: prev.isSystem || curPkgSystem,
+        isPrivileged: prev.isPrivileged || curPkgPriv,
+        isPersistent: prev.isPersistent || curPkgPers,
+        isSystemPartition: prev.isSystemPartition || curPkgSysPart,
+      });
+    }
+  };
 
   // Battery History timeline
   let dumpYear = 0;
   let dumpMonth = 0;
   let curYear = new Date().getFullYear();
   let hasExplicitHistoryYear = false;
+  let historyBaseTsMs = 0;
+  let hasEnteredHistory = false;
   let curTempC = 30;
   let curVoltMv = 3900;
   let curChargeMah = 0;
@@ -621,22 +943,50 @@ export async function parseBugReport(
   let lastSavedTs = 0;
   const timeline: TimelinePoint[] = [];
 
-  // Drain stats
+  // Drain & Standby stats
   let screenOnMs = 0;
   let screenOnCount = 0;
   let screenOffMs = 0;
+  let screenOffUptimeMs = 0;
+  let deepDozeMs = 0;
+  let lightDozeMs = 0;
   let totalDischargeMah = 0;
   let screenOnDischargeMah = 0;
   let screenOffDischargeMah = 0;
   let deepDozeDischargeMah = 0;
+  let lightDozeDischargeMah = 0;
   let screenOnPctDrop = 0;
   let screenOffPctDrop = 0;
   let partialWakelockMs = 0;
+  let connectivityChanges = 0;
+
+  // Radio stats (Wi-Fi + Cellular + GPS)
   let wifiDrainMah = 0;
   let wifiTxGb = "0 B";
   let wifiRxMb = "0 B";
   let wifiPoorSignalPct = 0;
-  let inWifiRssi = false;
+  let wifiScanMs = 0;
+  let wifiScanPct = 0;
+  let wifiDisconnPct = 0;
+  const wifiSignal: SignalQualityDistribution = {
+    great: 0,
+    good: 0,
+    moderate: 0,
+    poor: 0,
+  };
+  let cellularDrainMah = 0;
+  let cellularTx = "0 B";
+  let cellularRx = "0 B";
+  let cellularActiveMs = 0;
+  let cellularActivePct = 0;
+  const cellularSignal: SignalQualityDistribution = {
+    great: 0,
+    good: 0,
+    moderate: 0,
+    poor: 0,
+  };
+  let gpsDrainMah = 0;
+  let radioSubMode: "" | "wifi_rssi" | "wifi_states" | "cell_rsrp" = "";
 
   // Step durations & 2-week daily stats
   let estScreenOffFullMs = 0;
@@ -666,6 +1016,31 @@ export async function parseBugReport(
     unattributedMah: number;
     detail: string;
   }[] = [];
+  const upsertGlobalSubsystem = (
+    name: string,
+    mah: number,
+    appsMah: number | null,
+    unattributedMah: number,
+    detail: string,
+  ) => {
+    const existing = globalSubsystems.find((s) => s.name === name);
+    if (existing) {
+      existing.mah = mah;
+      existing.appsMah = appsMah;
+      existing.unattributedMah = unattributedMah;
+      existing.detail = detail;
+    } else {
+      globalSubsystems.push({
+        name,
+        label: SUBSYSTEM_LABELS[name] || name,
+        mah,
+        appsMah,
+        unattributedMah,
+        detail,
+      });
+    }
+  };
+
   let powerMode: "global" | "sub" | "uid" = "global";
   interface RawUidPower {
     uid: string;
@@ -678,18 +1053,26 @@ export async function parseBugReport(
   let activeUidPower: RawUidPower | null = null;
 
   const applyUidComponents = (text: string, target: RawUidPower) => {
-    const wlMatch = /wakelock=[\d.]+\s*\(([^)]+)\)/.exec(text);
+    const clean = text.split(/Including smearing:|Excluded from smearing/)[0];
+    const wlMatch = /wakelock=[\d.]+\s*\(([^)]+)\)/.exec(clean);
     if (wlMatch)
       target.wakelockMs = Math.max(
         target.wakelockMs,
         parseDurationMs(wlMatch[1]),
       );
     const parts: string[] = [];
-    for (const cm of text.matchAll(
-      /\b(cpu|audio|video|wifi|wakelock|camera|GPU|bluetooth|gnss|mobile_radio)=([\d.]+)/g,
+    for (const cm of clean.matchAll(
+      /\b(cpu|audio|video|wifi|wakelock|wake|camera|GPU|bluetooth|gnss|mobile_radio|radio)=([\d.]+)/g,
     )) {
-      if (parseFloat(cm[2]) >= 1)
-        parts.push(`${cm[1]} ${Math.round(parseFloat(cm[2]))} mAh`);
+      if (parseFloat(cm[2]) >= 1) {
+        const label =
+          cm[1] === "wake"
+            ? "wakelock"
+            : cm[1] === "radio"
+              ? "mobile_radio"
+              : cm[1];
+        parts.push(`${label} ${Math.round(parseFloat(cm[2]))} mAh`);
+      }
     }
     if (parts.length > 0) target.detail = parts.slice(0, 3).join(" · ");
   };
@@ -707,6 +1090,7 @@ export async function parseBugReport(
   const uidWakeupsMap = new Map<string, number>();
   const uidProcsMap = new Map<string, string[]>();
   const uidWifiDataMap = new Map<string, string>();
+  const uidFgActMs = new Map<string, number>();
   let currentUidBlock = "";
 
   const processLine = (raw: string) => {
@@ -717,11 +1101,24 @@ export async function parseBugReport(
       section = "props";
       return;
     }
+    if (line.startsWith("------ SYSTEM LOG")) {
+      section = "syslog";
+      return;
+    }
+    if (line.startsWith("------ UFS LT ")) {
+      section = "ufs_lt";
+      return;
+    }
     if (
       (section === "props" && line.startsWith("------ ")) ||
       ((line.startsWith("------ ") || line.startsWith("--------- ")) &&
         line.includes("was the duration of"))
     ) {
+      if (section === "package") {
+        flushCurPkg();
+        curPkgName = "";
+        inPackages = false;
+      }
       section = "skip";
       bsSub = "skip";
       inPreReboot = false;
@@ -732,11 +1129,17 @@ export async function parseBugReport(
     }
 
     if (line.startsWith("DUMP OF SERVICE ")) {
+      if (section === "package") {
+        flushCurPkg();
+        curPkgName = "";
+        inPackages = false;
+      }
       if (line.includes("android.hardware.health.IHealth/"))
         section = "ihealth";
       else if (line.includes("android.hardware.thermal.IThermal/")) {
         section = "ithermal";
         thermalSub = "";
+        curVirtualSensor = "";
       } else if (line.includes("DUMP OF SERVICE thermalservice:")) {
         section = "thermalservice";
         thermalSub = "";
@@ -753,6 +1156,13 @@ export async function parseBugReport(
         section = "audiopolicy";
         inAudioRecord = false;
         pendingAudioClient = null;
+      } else if (line.includes("DUMP OF SERVICE package:")) {
+        section = "package";
+        inPackages = false;
+        curPkgName = "";
+      } else if (line.includes("DUMP OF SERVICE role:")) {
+        section = "role";
+        curRoleIsSystem = false;
       } else {
         section = "skip";
       }
@@ -762,7 +1172,7 @@ export async function parseBugReport(
     if (section === "skip") return;
 
     if (section === "header") {
-      if (lineCount > 120) {
+      if (lineCount > 140) {
         section = "skip";
         return;
       }
@@ -790,7 +1200,8 @@ export async function parseBugReport(
       } else if (line.startsWith("androidboot.bootreason")) {
         bootReason = line.split("=")[1]?.replace(/"/g, "").trim() ?? "";
       } else if (line.startsWith("androidboot.ddr_size")) {
-        ramGb = line.split("=")[1]?.replace(/"/g, "").trim() ?? "";
+        const rawRam = line.split("=")[1]?.replace(/"/g, "").trim() ?? "";
+        ramGb = /^\d+$/.test(rawRam) ? `${rawRam}GB` : rawRam;
       } else if (line.startsWith("androidboot.hardware.ufs")) {
         const m = /"(\d+GB)"/i.exec(line);
         if (m) storageGb = m[1];
@@ -810,16 +1221,50 @@ export async function parseBugReport(
         key === "ro.product.vendor.marketname"
       )
         propMarketName = val;
-      else if (key === "ro.product.model" || key === "ro.product.product.model")
+      else if (
+        key === "ro.product.model" ||
+        key === "ro.product.product.model" ||
+        key === "ro.product.vendor.model"
+      )
         propModel = propModel || val;
       else if (key === "ro.product.brand") propBrand = val;
       else if (key === "ro.product.manufacturer") propManufacturer = val;
       else if (key === "ro.product.device") propDevice = val;
+      else if (key === "ro.boot.ddr_size" && !ramGb)
+        ramGb = /^\d+$/.test(val) ? `${val}GB` : val;
       else if (
         (key === "ro.boot.bootreason" || key === "sys.boot.reason") &&
         !bootReason
       )
         bootReason = val;
+      return;
+    }
+
+    if (section === "ufs_lt") {
+      const val = parseInt(line.trim(), 10);
+      if (Number.isInteger(val) && val > 0 && val <= 11 && secUfsLt === null) {
+        secUfsLt = Math.min(100, val * 10);
+      }
+      return;
+    }
+
+    if (section === "syslog") {
+      if (!line.includes("SIOP::")) return;
+      const siopPart = line.slice(line.indexOf("SIOP::") + 6);
+      for (const m of siopPart.matchAll(
+        /\b(AP|AP2|BAT|USB|CHG|DC|PA|SKIN|SKINF|SKINB|WIFI2|MEM2|UPSPK|DNSPK|RCV2):(-?\d+)/g,
+      )) {
+        const rawVal = Number(m[2]);
+        if (rawVal <= 0) continue;
+        const c = rawVal / 10;
+        if (c < -40 || c > 150) continue;
+        const key = `SIOP_${m[1]}`;
+        const prev = siopTempMap.get(key);
+        siopTempMap.set(key, {
+          currentC: c,
+          peakC: prev ? Math.max(prev.peakC, c) : c,
+        });
+      }
       return;
     }
 
@@ -839,6 +1284,10 @@ export async function parseBugReport(
       } else if (t.startsWith("status:") && healthStatus === "UNKNOWN") {
         const code = parseInt(t.split(":")[1], 10);
         healthStatus = BATTERY_SERVICE_STATUS[code] ?? healthStatus;
+      } else if (t.startsWith("health:")) {
+        const code = parseInt(t.split(":")[1], 10);
+        if (BATTERY_HEALTH_CODES[code])
+          batteryHealth = BATTERY_HEALTH_CODES[code];
       } else if (t.startsWith("technology:")) {
         technology = t.split(":")[1].trim() || technology;
       } else if (
@@ -846,7 +1295,34 @@ export async function parseBugReport(
         chargingPolicy === "DEFAULT"
       ) {
         const pol = parseInt(t.split(":")[1], 10);
-        if (pol === 2) chargingPolicy = "LONG_LIFE";
+        if (BATTERY_CHARGING_POLICY[pol] && pol !== 0) {
+          chargingPolicy = BATTERY_CHARGING_POLICY[pol];
+        }
+      } else if (
+        t.startsWith("Charging state:") &&
+        chargingState === "NORMAL"
+      ) {
+        const st = parseInt(t.split(":")[1], 10);
+        if (BATTERY_CHARGING_STATE[st] && st !== 0) {
+          chargingState = BATTERY_CHARGING_STATE[st];
+        }
+      } else if (t.startsWith("current now:")) {
+        const c = parseInt(t.split(":")[1], 10);
+        if (Number.isFinite(c)) svcCurrentMa = c;
+      } else if (t.startsWith("mSavedBatteryAsoc:")) {
+        const m = /\[(\d+)\]/.exec(t);
+        if (m) secAsoc = Number(m[1]);
+      } else if (t.startsWith("mSavedBatteryUsage:")) {
+        const m = /\[(\d+)\]/.exec(t);
+        if (m) secBatteryUsage = Number(m[1]);
+      } else if (t.startsWith("mProtectBatteryMode:")) {
+        const m = /:\s*(\d+)/.exec(t);
+        if (m) secProtectMode = Number(m[1]);
+      } else if (t.startsWith("LLB CAL:")) {
+        secCalDate = formatYyyymmdd(t.slice(8)) ?? secCalDate;
+      } else if (t.startsWith("battery FirstUseDate:")) {
+        const m = /\[(\d{8})\]/.exec(t);
+        if (m) secFirstUseDate = formatYyyymmdd(m[1]);
       }
       return;
     }
@@ -869,22 +1345,30 @@ export async function parseBugReport(
         const t10 = num("batteryTemperatureTenthsCelsius");
         const ua = num("batteryCurrentMicroamps");
         const mfgSec = num("batteryManufacturingDateSeconds");
+        const firstSec = num("batteryFirstUsageSeconds");
+        const soh = num("batteryStateOfHealth");
         const lifeA = /lifetimeA:\s*(\d+)/.exec(line);
         if (fullUah && fullUah > 0) learnedMah = Math.round(fullUah / 1000);
         if (designUah && designUah > 0)
           designMah = Math.round(designUah / 1000);
         if (cyc !== null && cyc >= 0) cycleCount = cyc;
+        if (soh !== null && soh > 0 && soh <= 100) stateOfHealthPct = soh;
         if (lvl !== null) levelPct = lvl;
         if (mv !== null) voltageMv = mv;
         if (t10 !== null) tempC = t10 / 10;
-        if (ua !== null) currentMa = Math.round(ua / 1000);
+        if (ua !== null) rawHealthCurrentUa = ua;
         if (mfgSec && mfgSec > 0) {
           manufacturedDate = new Date(mfgSec * 1000).toISOString().slice(0, 10);
+        }
+        if (firstSec && firstSec > 0) {
+          firstUseDate = new Date(firstSec * 1000).toISOString().slice(0, 10);
         }
         const lifeVal = lifeA ? Number(lifeA[1]) : 0;
         if (lifeVal > 0 && lifeVal <= 11)
           ufsLifetimeUsedPct = Math.min(100, lifeVal * 10);
         healthStatus = str("batteryStatus") ?? healthStatus;
+        batteryHealth = str("batteryHealth") ?? batteryHealth;
+        chargingState = str("chargingState") ?? chargingState;
         chargingPolicy = str("chargingPolicy") ?? chargingPolicy;
         technology = str("batteryTechnology") ?? technology;
       }
@@ -893,7 +1377,10 @@ export async function parseBugReport(
 
     if (section === "ithermal") {
       if (line.startsWith("getCurrentTemperatures:")) thermalSub = "curr";
-      else if (line.startsWith("get")) thermalSub = "";
+      else if (line.startsWith("getVirtualSensorInfo:")) {
+        thermalSub = "virtual";
+        curVirtualSensor = "";
+      } else if (line.startsWith("get")) thermalSub = "";
       else if (thermalSub === "curr") {
         const m =
           /Type:\s*(\S+)\s+Name:\s*(\S+)\s+CurrentValue:\s*([\d.-]+)\s+ThrottlingStatus:\s*(\S+)/.exec(
@@ -905,6 +1392,18 @@ export async function parseBugReport(
             value: Number(m[3]),
             status: m[4],
           });
+        }
+      } else if (thermalSub === "virtual") {
+        const nm = /^\s+Name:\s*(\S+)/.exec(line);
+        if (nm) {
+          curVirtualSensor = nm[1];
+          virtualSensorNames.add(curVirtualSensor);
+        } else if (
+          curVirtualSensor &&
+          line.includes("Formula:") &&
+          line.includes("COUNT_THRESHOLD")
+        ) {
+          countThresholdNames.add(curVirtualSensor);
         }
       }
       return;
@@ -935,12 +1434,15 @@ export async function parseBugReport(
           const status = THERMAL_STATUS_NAMES[Number(m[4])] ?? "NONE";
           if (thermalSub === "cached") {
             cachedTempMap.set(name, val);
-          } else if (!currentTempMap.has(name)) {
-            currentTempMap.set(name, {
-              type: HAL_TYPE_NAMES[typeCode] ?? "UNKNOWN",
-              value: val,
-              status,
-            });
+          } else {
+            thermalServiceNames.add(name);
+            if (!currentTempMap.has(name)) {
+              currentTempMap.set(name, {
+                type: HAL_TYPE_NAMES[typeCode] ?? "UNKNOWN",
+                value: val,
+                status,
+              });
+            }
           }
         }
       }
@@ -1030,9 +1532,73 @@ export async function parseBugReport(
       return;
     }
 
+    if (section === "package") {
+      if (!inPackages) {
+        if (line === "Packages:") inPackages = true;
+        return;
+      }
+      if (line && !line.startsWith(" ") && !line.startsWith("\t")) {
+        flushCurPkg();
+        curPkgName = "";
+        inPackages = false;
+        return;
+      }
+      if (line.startsWith("  Package [")) {
+        flushCurPkg();
+        const pm = /^ {2}Package \[([^\]]+)\]/.exec(line);
+        curPkgName = pm?.[1] ?? "";
+        curPkgAppId = null;
+        curPkgSystem = false;
+        curPkgPriv = false;
+        curPkgPers = false;
+        curPkgSysPart = false;
+        curPkgDataPath = false;
+        return;
+      }
+      if (!curPkgName) return;
+      const trim = line.trim();
+      if (trim.startsWith("appId=")) {
+        const n = parseInt(trim.slice(6), 10);
+        if (Number.isInteger(n)) curPkgAppId = n;
+      } else if (trim.startsWith("codePath=")) {
+        curPkgDataPath = trim.startsWith("codePath=/data/");
+      } else if (trim.startsWith("flags=[")) {
+        curPkgSystem = trim.includes(" SYSTEM ");
+        curPkgPers = trim.includes(" PERSISTENT ");
+      } else if (trim.startsWith("privateFlags=[")) {
+        curPkgPriv = trim.includes(" PRIVILEGED ");
+        curPkgSysPart =
+          trim.includes(" SYSTEM_EXT ") ||
+          trim.includes(" VENDOR ") ||
+          trim.includes(" ODM ");
+      }
+      return;
+    }
+
+    if (section === "role") {
+      const trim = line.trim();
+      if (trim.startsWith("name=")) {
+        curRoleIsSystem = trim.startsWith("name=android.app.role.SYSTEM_");
+      } else if (curRoleIsSystem && trim.startsWith("holders=")) {
+        for (const holder of trim.slice(8).split(",")) {
+          const pkg = holder.trim();
+          if (pkg) systemRolePkgs.add(pkg);
+        }
+      }
+      return;
+    }
+
     // batterystats section
-    if (line.startsWith("Battery History [")) {
-      bsSub = "history";
+    if (
+      line.startsWith("Battery History [") ||
+      line.startsWith("Battery History (")
+    ) {
+      if (!hasEnteredHistory) {
+        hasEnteredHistory = true;
+        bsSub = "history";
+      } else {
+        bsSub = "skip";
+      }
       return;
     }
     if (line.startsWith("Discharge step durations:")) {
@@ -1072,14 +1638,15 @@ export async function parseBugReport(
       bsSub = "wakelocks";
       return;
     }
-    if (/^ {2}(u0a\d+|1000|1001|1041|1046|1073|2000|\d+):$/.test(line)) {
+    if (/^ {2}(u0a\d+|1000|1001|1041|1046|1051|1073|2000|-?\d+):$/.test(line)) {
       bsSub = "uids";
       currentUidBlock = line.trim().slice(0, -1);
       return;
     }
     if (
       line.startsWith("Per process state tracking available:") ||
-      line.startsWith("--------- ")
+      line.startsWith("--------- ") ||
+      (bsSub === "power" && /^ {2}\S/.test(line) && !/^ {2}UID /.test(line))
     ) {
       bsSub = "skip";
       return;
@@ -1087,50 +1654,93 @@ export async function parseBugReport(
 
     if (bsSub === "history") {
       if (line.includes("TIME:")) {
-        const tm = /TIME:\s*(\d{4})-/.exec(line);
-        if (tm) {
-          curYear = Number(tm[1]);
+        const rt =
+          /(?:RESET:)?TIME:\s*(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/.exec(
+            line,
+          );
+        if (rt) {
+          const y = Number(rt[1]);
+          curYear = y;
           hasExplicitHistoryYear = true;
+          const offMatch = /^\s*(0|\+[0-9dhms]+)\s+\(\d+\)/.exec(line);
+          const offMs =
+            offMatch && offMatch[1] !== "0" ? parseDurationMs(offMatch[1]) : 0;
+          historyBaseTsMs =
+            Date.UTC(
+              y,
+              Number(rt[2]) - 1,
+              Number(rt[3]),
+              Number(rt[4]),
+              Number(rt[5]),
+              Number(rt[6]),
+            ) - offMs;
+        } else {
+          const tm = /TIME:\s*(\d{4})-/.exec(line);
+          if (tm) {
+            curYear = Number(tm[1]);
+            hasExplicitHistoryYear = true;
+          }
         }
         return;
       }
-      if (line.includes('="')) {
+      if (line.includes(':"')) {
         for (const pm of line.matchAll(
-          /(?:fg|job|pkgactive|pkginactive|top|sync)=(u0a\d+|\d+):"([^":/]+)/g,
+          /(?:fg|top|pkgactive|pkginactive)=(u0a\d+|\d+):"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)/g,
         )) {
           if (!uidToPkgMap.has(pm[1])) uidToPkgMap.set(pm[1], pm[2]);
         }
       }
 
+      let tsMs: number;
+      let timeLabel: string;
+      let lvl: number;
+      let rawFlags: string;
+
       const hm =
         /^\s+(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\.\d+\s+(\d{3})\s+[0-9a-fA-F]+\s*(.*)$/.exec(
           line,
         );
-      if (!hm) return;
-
-      const pointYear =
-        !hasExplicitHistoryYear &&
-        dumpYear > 2020 &&
-        dumpMonth === 1 &&
-        hm[1].startsWith("12-")
-          ? dumpYear - 1
-          : !hasExplicitHistoryYear &&
-              dumpYear > 2020 &&
-              dumpMonth === 1 &&
-              hm[1].startsWith("01-")
-            ? dumpYear
-            : curYear;
-      let tsMs = parseTimestampMs(pointYear, hm[1]);
-      if (
-        hm[1].startsWith("01-") &&
-        lastSavedTs > 0 &&
-        tsMs < lastSavedTs - 300 * 86_400_000
-      ) {
-        curYear += 1;
-        tsMs = parseTimestampMs(curYear, hm[1]);
+      if (hm) {
+        const pointYear =
+          !hasExplicitHistoryYear &&
+          dumpYear > 2020 &&
+          dumpMonth === 1 &&
+          hm[1].startsWith("12-")
+            ? dumpYear - 1
+            : !hasExplicitHistoryYear &&
+                dumpYear > 2020 &&
+                dumpMonth === 1 &&
+                hm[1].startsWith("01-")
+              ? dumpYear
+              : curYear;
+        tsMs = parseTimestampMs(pointYear, hm[1]);
+        if (
+          hm[1].startsWith("01-") &&
+          lastSavedTs > 0 &&
+          tsMs < lastSavedTs - 300 * 86_400_000
+        ) {
+          curYear += 1;
+          tsMs = parseTimestampMs(curYear, hm[1]);
+        }
+        timeLabel = hm[1].slice(0, 11);
+        lvl = Number(hm[2]);
+        rawFlags = hm[3];
+      } else if (historyBaseTsMs > 0) {
+        const rm =
+          /^\s+(0|\+[0-9dhms]+)\s+\(\d+\)\s+(\d{3})\s+[0-9a-fA-F]+\s*(.*)$/.exec(
+            line,
+          );
+        if (!rm) return;
+        const offMs = rm[1] === "0" ? 0 : parseDurationMs(rm[1]);
+        tsMs = historyBaseTsMs + offMs;
+        timeLabel = new Date(tsMs).toISOString().slice(5, 16).replace("T", " ");
+        lvl = Number(rm[2]);
+        rawFlags = rm[3];
+      } else {
+        return;
       }
-      const lvl = Number(hm[2]);
-      const flags = hm[3].replace(/"[^"]*"/g, "");
+
+      const flags = rawFlags.replace(/"[^"]*"/g, "");
 
       const tm = /\btemp=(\d+)/.exec(flags);
       if (tm) curTempC = Number(tm[1]) / 10;
@@ -1171,7 +1781,7 @@ export async function parseBugReport(
 
       if (changed && tsMs > 0) {
         timeline.push({
-          time: hm[1].slice(0, 11),
+          time: timeLabel,
           tsMs,
           level: lvl,
           tempC: curTempC,
@@ -1264,8 +1874,13 @@ export async function parseBugReport(
 
     if (bsSub === "stats") {
       const t = line.trim();
-      if (inWifiRssi && !/^(?:none|poor|moderate|good|great)\s*\(/.test(t)) {
-        inWifiRssi = false;
+      if (
+        radioSubMode &&
+        !/^(?:none|very poor|poor|moderate|good|great|scanning|disconn|sta)\s*[:(]/i.test(
+          t,
+        )
+      ) {
+        radioSubMode = "";
       }
       if (t.startsWith("Estimated battery capacity:")) {
         const v = parseInt(t.split(":")[1], 10);
@@ -1274,8 +1889,20 @@ export async function parseBugReport(
         const v = parseInt(t.split(":")[1], 10);
         if (v > 0 && !learnedMah) learnedMah = v;
       } else if (t.startsWith("Time on battery screen off:")) {
-        const m = /Time on battery screen off:\s*([^(]+)\(/.exec(t);
-        if (m) screenOffMs = parseDurationMs(m[1].trim());
+        const m =
+          /Time on battery screen off:\s*([^(]+)\([^)]+\)\s*realtime(?:,\s*([^(]+)\([^)]+\)\s*uptime)?/.exec(
+            t,
+          );
+        if (m) {
+          screenOffMs = parseDurationMs(m[1].trim());
+          if (m[2]) screenOffUptimeMs = parseDurationMs(m[2].trim());
+        }
+      } else if (t.startsWith("Device full idling:")) {
+        const m = /Device full idling:\s*([^(]+)\(/.exec(t);
+        if (m) deepDozeMs = parseDurationMs(m[1].trim());
+      } else if (t.startsWith("Device light idling:")) {
+        const m = /Device light idling:\s*([^(]+)\(/.exec(t);
+        if (m) lightDozeMs = parseDurationMs(m[1].trim());
       } else if (t.startsWith("Discharge:"))
         totalDischargeMah = parseInt(t.split(":")[1], 10) || 0;
       else if (t.startsWith("Screen off discharge:"))
@@ -1284,26 +1911,72 @@ export async function parseBugReport(
         screenOnDischargeMah = parseInt(t.split(":")[1], 10) || 0;
       else if (t.startsWith("Device deep doze discharge:"))
         deepDozeDischargeMah = parseInt(t.split(":")[1], 10) || 0;
+      else if (t.startsWith("Device light doze discharge:"))
+        lightDozeDischargeMah = parseInt(t.split(":")[1], 10) || 0;
       else if (t.startsWith("Screen on:")) {
         const m = /Screen on:\s*([^(]+)\([^)]+\)\s*(\d+)x/.exec(t);
         if (m) {
           screenOnMs = parseDurationMs(m[1].trim());
           screenOnCount = Number(m[2]);
         }
+      } else if (t.startsWith("Connectivity changes:")) {
+        connectivityChanges = parseInt(t.split(":")[1], 10) || 0;
       } else if (t.startsWith("Total partial wakelock time:")) {
         partialWakelockMs = parseDurationMs(t.split(":")[1].trim());
+      } else if (t.startsWith("Cellular kernel active time:")) {
+        const m = /:\s*([^(]+)\(([\d.]+)%\)/.exec(t);
+        if (m) {
+          cellularActiveMs = parseDurationMs(m[1].trim());
+          cellularActivePct = parseFloat(m[2]);
+        }
+      } else if (t.startsWith("Cellular Battery drain:")) {
+        cellularDrainMah = parseFloat(t.split(":")[1]) || 0;
+      } else if (t.startsWith("Cellular data received:")) {
+        cellularRx = t.split(":")[1].trim();
+      } else if (t.startsWith("Cellular data sent:")) {
+        cellularTx = t.split(":")[1].trim();
+      } else if (t.startsWith("Cellular Rx signal strength")) {
+        radioSubMode = "cell_rsrp";
+      } else if (radioSubMode === "cell_rsrp") {
+        const m = /\(([\d.]+)%\)/.exec(t);
+        const pct = m ? parseFloat(m[1]) : 0;
+        if (t.startsWith("very poor") || t.startsWith("poor"))
+          cellularSignal.poor += pct;
+        else if (t.startsWith("moderate")) cellularSignal.moderate = pct;
+        else if (t.startsWith("good")) cellularSignal.good = pct;
+        else if (t.startsWith("great")) cellularSignal.great = pct;
+      } else if (t.startsWith("WiFi Scan time:")) {
+        const m = /:\s*([^(]+)\(([\d.]+)%\)/.exec(t);
+        if (m) {
+          wifiScanMs = parseDurationMs(m[1].trim());
+          wifiScanPct = parseFloat(m[2]);
+        }
       } else if (t.startsWith("WiFi Battery drain:")) {
         wifiDrainMah = parseFloat(t.split(":")[1]) || 0;
       } else if (t.startsWith("Wifi data received:")) {
         wifiRxMb = t.split(":")[1].trim();
       } else if (t.startsWith("Wifi data sent:")) {
         wifiTxGb = t.split(":")[1].trim();
+      } else if (t.startsWith("Wifi states:")) {
+        radioSubMode = "wifi_states";
+      } else if (radioSubMode === "wifi_states") {
+        if (t.startsWith("disconn")) {
+          const m = /\(([\d.]+)%\)/.exec(t);
+          if (m) wifiDisconnPct = parseFloat(m[1]);
+        }
       } else if (t.startsWith("Wifi Rx signal strength")) {
-        inWifiRssi = true;
-      } else if (inWifiRssi && t.startsWith("poor (")) {
+        radioSubMode = "wifi_rssi";
+      } else if (radioSubMode === "wifi_rssi") {
         const m = /\(([\d.]+)%\)/.exec(t);
-        if (m) wifiPoorSignalPct = parseFloat(m[1]);
-        inWifiRssi = false;
+        const pct = m ? parseFloat(m[1]) : 0;
+        if (t.startsWith("very poor") || t.startsWith("poor")) {
+          wifiSignal.poor += pct;
+          wifiPoorSignalPct = Math.round(wifiSignal.poor * 10) / 10;
+        } else if (t.startsWith("moderate")) wifiSignal.moderate = pct;
+        else if (t.startsWith("good")) wifiSignal.good = pct;
+        else if (t.startsWith("great")) wifiSignal.great = pct;
+      } else if (t.startsWith("GPS Battery Drain:")) {
+        gpsDrainMah = parseFloat(t.split(":")[1]) || 0;
       } else if (t.startsWith("Amount discharged while screen on:")) {
         screenOnPctDrop = parseInt(t.split(":")[1], 10) || 0;
       } else if (t.startsWith("Amount discharged while screen off:")) {
@@ -1313,7 +1986,9 @@ export async function parseBugReport(
     }
 
     if (bsSub === "power") {
-      const uidMatch = /^\s{2,4}UID ([^:\s]+):\s*([\d.]+)(.*)$/.exec(line);
+      const uidMatch = /^\s{2,6}(?:UID|Uid) ([^:\s]+):\s*([\d.]+)(.*)$/.exec(
+        line,
+      );
       if (uidMatch) {
         powerMode = "uid";
         activeUidPower = {
@@ -1327,13 +2002,31 @@ export async function parseBugReport(
         rawUidPowers.push(activeUidPower);
         return;
       }
+      const legacySubMatch =
+        /^\s{2,6}(Screen|Cell standby|Idle|Wifi|Bluetooth|Phone calls|Ambient display|Camera|Audio|Video):\s*([\d.]+)(.*)$/.exec(
+          line,
+        );
+      if (legacySubMatch) {
+        activeUidPower = null;
+        const key =
+          LEGACY_SUBSYSTEM_MAP[legacySubMatch[1].toLowerCase()] ??
+          legacySubMatch[1].toLowerCase();
+        const mah = parseFloat(legacySubMatch[2]);
+        if (mah >= 1) {
+          upsertGlobalSubsystem(key, mah, null, 0, "Subsystem estimate");
+        }
+        return;
+      }
       if (powerMode === "global") {
         if (line.trim().startsWith("(")) {
           powerMode = "sub";
           return;
         }
         const gm = /^\s{4}([A-Za-z_]+):\s*([\d.]+)(.*)$/.exec(line);
-        if (gm && !["Capacity", "Global"].includes(gm[1])) {
+        if (
+          gm &&
+          !["Capacity", "Global", "Unaccounted", "Over-counted"].includes(gm[1])
+        ) {
           const mah = parseFloat(gm[2]);
           if (mah >= 1) {
             const appsMatch = /\bapps:\s*([\d.]+)/.exec(gm[3]);
@@ -1350,22 +2043,7 @@ export async function parseBugReport(
             const detail = durMatch
               ? `${formatDurationShort(parseDurationMs(durMatch[1]))} active`
               : "Subsystem estimate";
-            const existing = globalSubsystems.find((s) => s.name === gm[1]);
-            if (existing) {
-              existing.mah = mah;
-              existing.appsMah = appsMah;
-              existing.unattributedMah = unattributedMah;
-              existing.detail = detail;
-            } else {
-              globalSubsystems.push({
-                name: gm[1],
-                label: SUBSYSTEM_LABELS[gm[1]] || gm[1],
-                mah,
-                appsMah,
-                unattributedMah,
-                detail,
-              });
-            }
+            upsertGlobalSubsystem(gm[1], mah, appsMah, unattributedMah, detail);
           }
         }
       } else if (powerMode === "uid" && activeUidPower) {
@@ -1375,7 +2053,7 @@ export async function parseBugReport(
         } else if (trim.startsWith("(on battery, screen off/doze)")) {
           let offSum = 0;
           for (const cm of trim.matchAll(
-            /\b(?:cpu|audio|video|wifi|wakelock|camera|GPU|bluetooth|gnss|mobile_radio)=([\d.]+)/g,
+            /\b(?:cpu|audio|video|wifi|wakelock|wake|camera|GPU|bluetooth|gnss|mobile_radio|radio)=([\d.]+)/g,
           )) {
             offSum += parseFloat(cm[1]);
           }
@@ -1434,6 +2112,12 @@ export async function parseBugReport(
           uidToPkgMap.set(currentUidBlock, "com.android.systemui");
         }
       }
+      if (trim.startsWith("Foreground activities:")) {
+        const fm = /Foreground activities:\s*([^(]+)\(/.exec(trim);
+        if (fm) {
+          uidFgActMs.set(currentUidBlock, parseDurationMs(fm[1].trim()));
+        }
+      }
       if (trim.startsWith("Proc ")) {
         const pm = /^Proc\s+(.+?):(?:\s|$)/.exec(trim);
         if (pm && pm[1] !== "*wakelock*") {
@@ -1484,6 +2168,8 @@ export async function parseBugReport(
       return "Reconstructing battery & temperature timeline...";
     if (section === "batterystats")
       return "Ranking wakelocks & app power drain...";
+    if (section === "package" || section === "role")
+      return "Classifying system services & user apps...";
     return "Scanning Android system dumps...";
   };
 
@@ -1524,6 +2210,7 @@ export async function parseBugReport(
     }
   }
   if (remainder) processLine(remainder);
+  flushCurPkg();
 
   const hasTelemetry =
     Boolean(dumpTime) ||
@@ -1540,29 +2227,102 @@ export async function parseBugReport(
 
   onProgress?.(100, "Finalizing telemetry report...");
 
-  // Device identification (fully dynamic across OEMs)
+  // Device identification & 2-layer profile resolution
   const resolvedCodename = codename || propDevice || "unknown";
-  const rawModel = propMarketName || propModel || titleCase(resolvedCodename);
   const resolvedBrand = propBrand || propManufacturer || "Android";
-  const model =
-    rawModel &&
-    propManufacturer &&
-    !rawModel.toLowerCase().includes(propManufacturer.toLowerCase()) &&
-    rawModel === propDevice
-      ? `${propManufacturer} ${rawModel}`
-      : rawModel || `${titleCase(resolvedBrand)} Device`;
+  const rawModel = propMarketName || propModel || titleCase(resolvedCodename);
+  const profile = resolveDeviceProfile({
+    codename: resolvedCodename,
+    model: rawModel,
+    brand: propBrand,
+    manufacturer: propManufacturer,
+  });
 
-  // Health calculations (never hardcode a 5000 mAh fallback when design capacity is absent)
+  const model =
+    profile.layer === "model" && !propMarketName
+      ? profile.label
+      : rawModel &&
+          propManufacturer &&
+          !rawModel.toLowerCase().includes(propManufacturer.toLowerCase()) &&
+          rawModel === propDevice
+        ? `${propManufacturer} ${rawModel}`
+        : rawModel || `${titleCase(resolvedBrand)} Device`;
+
+  if (
+    ufsLifetimeUsedPct === null &&
+    profile.quirks.secUfsLifetime &&
+    secUfsLt
+  ) {
+    ufsLifetimeUsedPct = secUfsLt;
+  }
+
+  // Apply profile quirks for battery extras (e.g. Samsung sec_battery ASOC, cycles, mA unit)
+  if (profile.quirks.samsungBatteryExtras) {
+    if (
+      secAsoc !== null &&
+      secAsoc > 0 &&
+      secAsoc <= 100 &&
+      designMah &&
+      (learnedMah === null || learnedMah === designMah)
+    ) {
+      learnedMah = Math.round((designMah * secAsoc) / 100);
+      stateOfHealthPct = stateOfHealthPct ?? secAsoc;
+    }
+    if (
+      secBatteryUsage !== null &&
+      secBatteryUsage > 0 &&
+      (cycleCount === null || cycleCount === 0)
+    ) {
+      cycleCount = Math.round(secBatteryUsage / 100);
+    }
+    if (
+      secProtectMode !== null &&
+      (chargingPolicy === "DEFAULT" || chargingPolicy === "INVALID")
+    ) {
+      const secPolMap: Record<number, string> = {
+        0: "DEFAULT",
+        1: "BASIC_PROTECT",
+        2: "ADAPTIVE_PROTECT",
+        3: "MAXIMUM_PROTECT",
+      };
+      chargingPolicy = secPolMap[secProtectMode] ?? chargingPolicy;
+    }
+    if (!manufacturedDate && secCalDate) manufacturedDate = secCalDate;
+    if (!firstUseDate && secFirstUseDate) firstUseDate = secFirstUseDate;
+  }
+
+  // Some OEM HALs (e.g. Samsung Exynos) log batteryCurrentMicroamps in milliamps instead of microamps
+  let currentMa: number | null = null;
+  if (rawHealthCurrentUa !== null) {
+    if (
+      profile.quirks.currentMaHeuristic &&
+      Math.abs(rawHealthCurrentUa) > 0 &&
+      Math.abs(rawHealthCurrentUa) < 20_000
+    ) {
+      currentMa = Math.round(rawHealthCurrentUa);
+    } else {
+      currentMa = Math.round(rawHealthCurrentUa / 1000);
+    }
+  } else if (svcCurrentMa !== null) {
+    currentMa =
+      Math.abs(svcCurrentMa) >= 20_000
+        ? Math.round(svcCurrentMa / 1000)
+        : Math.round(svcCurrentMa);
+  }
+
+  // Health calculations (never hardcode a design capacity or fabricate health from Charge counter alone)
   const fallbackFullMah =
     learnedMah ??
-    estimatedMah ??
-    (svcChargeCounterMah > 0 && levelPct >= 20
-      ? Math.round((svcChargeCounterMah / levelPct) * 100)
+    (designMah && designMah > 0
+      ? (estimatedMah ??
+        (svcChargeCounterMah > 0 && levelPct >= 20
+          ? Math.round((svcChargeCounterMah / levelPct) * 100)
+          : null))
       : null);
 
   let healthPct: number | null = null;
   let lostMah: number | null = null;
-  let verdict: "Good" | "Fair" | "Worn" | "Unknown" = "Unknown";
+  let verdict: "Great" | "Good" | "Fair" | "Worn" | "Unknown" = "Unknown";
 
   if (fallbackFullMah && designMah && designMah > 0) {
     healthPct = Math.min(
@@ -1570,29 +2330,65 @@ export async function parseBugReport(
       Math.round((fallbackFullMah / designMah) * 1000) / 10,
     );
     lostMah = Math.max(0, designMah - fallbackFullMah);
-    verdict = healthPct >= 90 ? "Good" : healthPct >= 80 ? "Fair" : "Worn";
+    verdict =
+      healthPct >= 95
+        ? "Great"
+        : healthPct >= 90
+          ? "Good"
+          : healthPct >= 80
+            ? "Fair"
+            : "Worn";
   }
 
-  // Universal thermal sensor discovery
+  // Thermal sensor discovery (prefer public thermalservice HAL list; fall back to IThermal or OEM SIOP log)
+  if (
+    currentTempMap.size === 0 &&
+    profile.quirks.siopThermalLog &&
+    siopTempMap.size > 0
+  ) {
+    for (const [name, vals] of siopTempMap.entries()) {
+      currentTempMap.set(name, {
+        type: "UNKNOWN",
+        value: vals.currentC,
+        status: "NONE",
+      });
+      cachedTempMap.set(name, vals.peakC);
+    }
+  }
+
+  const usePublicHalOnly = thermalServiceNames.size > 0;
   const sensors: ThermalSensor[] = [];
   for (const [name, cur] of currentTempMap.entries()) {
+    if (usePublicHalOnly && !thermalServiceNames.has(name)) continue;
+    if (countThresholdNames.has(name)) continue;
     if (
-      name.includes("MINUS") ||
+      /MINUS|-DIFF\b|UNDER-THRESHOLD|_WEIGHT\b/i.test(name) ||
       !Number.isFinite(cur.value) ||
       cur.value <= -40 ||
+      cur.value > 150 ||
       (cur.value === 0 && cur.status === "NONE")
-    )
+    ) {
       continue;
+    }
     const meta = friendlySensorLabel(name, cur.type);
     const cached = cachedTempMap.get(name);
+    const validCached =
+      cached !== undefined &&
+      Number.isFinite(cached) &&
+      cached > -40 &&
+      cached <= 150
+        ? cached
+        : undefined;
     sensors.push({
       name,
       label: meta.label,
       type: meta.group,
+      section: meta.section,
+      isVirtual: virtualSensorNames.has(name),
       currentC: Math.round(cur.value * 10) / 10,
       peakC:
-        cached !== undefined
-          ? Math.round(Math.max(cached, cur.value) * 10) / 10
+        validCached !== undefined
+          ? Math.round(Math.max(validCached, cur.value) * 10) / 10
           : null,
       status: cur.status,
     });
@@ -1603,19 +2399,33 @@ export async function parseBugReport(
     return rankDiff !== 0 ? rankDiff : b.currentC - a.currentC;
   });
 
-  const skinSensor = sensors.find(
-    (s) =>
-      s.name === "VIRTUAL-SKIN" || s.type === "Body" || /skin/i.test(s.name),
-  );
+  // Tiered skin sensor lookup so model/auxiliary skin nodes never preempt primary skin
+  const skinSensor =
+    sensors.find(
+      (s) =>
+        s.name === "VIRTUAL-SKIN" ||
+        s.name === "SIOP_SKIN" ||
+        s.name === "SKIN",
+    ) ??
+    sensors.find(
+      (s) =>
+        s.section === "body" &&
+        !/model|sub|legacy|speaker|charge|wlc|hint/i.test(s.name),
+    ) ??
+    sensors.find((s) => /skin/i.test(s.name));
+
   const batterySensor = sensors.find(
-    (s) => s.name.toLowerCase() === "battery" || s.type === "Battery",
+    (s) =>
+      s.name.toLowerCase() === "battery" ||
+      s.name === "SIOP_BAT" ||
+      s.section === "battery",
   );
-  const coilSensor = sensors.find((s) => /qi_therm|wireless|wlc/i.test(s.name));
+  const coilSensor = sensors.find((s) => s.section === "coil");
   const cpuTemps = sensors
-    .filter((s) => s.type === "CPU")
+    .filter((s) => s.section === "cpu")
     .map((s) => s.peakC ?? s.currentC);
   const gpuTemps = sensors
-    .filter((s) => s.type === "GPU")
+    .filter((s) => s.section === "gpu")
     .map((s) => s.peakC ?? s.currentC);
 
   // BCL brownout deduplication (Pixel shares AUDIO & HAPTICS counts on the same rail)
@@ -1624,6 +2434,7 @@ export async function parseBugReport(
     .filter(
       (m) =>
         !(
+          profile.quirks.bclAudioHapticsShared !== false &&
           m.module === "HAPTICS" &&
           audioBcl &&
           m.startCount === audioBcl.startCount &&
@@ -1647,6 +2458,47 @@ export async function parseBugReport(
     modules: bclModules,
   };
 
+  // Helper to resolve UID -> package & 3-tier classification
+  const resolvePkgForUid = (uid: string): string => {
+    const sysMeta = SYSTEM_UID_NAMES[uid];
+    if (sysMeta) return sysMeta.pkg;
+    if (uid.startsWith("u0a")) {
+      const appId = 10000 + Number(uid.slice(3));
+      const pInfo = appIdPkgMap.get(appId);
+      if (pInfo) return pInfo.pkg;
+    }
+    const fromBs = uidToPkgMap.get(uid);
+    if (fromBs && !fromBs.startsWith("@") && !fromBs.startsWith("#"))
+      return fromBs;
+    return uid;
+  };
+
+  const resolveUidKind = (
+    uid: string,
+    pkg: string,
+  ): "system" | "system-app" | "app" => {
+    if (!uid.startsWith("u")) return "system";
+    const appId = 10000 + Number(uid.slice(3));
+    const pInfo = appIdPkgMap.get(appId);
+    if (pInfo) {
+      const fgMs = uidFgActMs.get(uid) ?? 0;
+      if (
+        pInfo.isPersistent ||
+        pInfo.isSystemPartition ||
+        (pInfo.isSystem &&
+          pInfo.isPrivileged &&
+          (systemRolePkgs.has(pkg) ||
+            systemRolePkgs.has(pInfo.pkg) ||
+            fgMs < 10_000))
+      ) {
+        return "system";
+      }
+      if (pInfo.isSystem) return "system-app";
+      return "app";
+    }
+    return SYSTEM_UID_NAMES[uid] ? "system" : "app";
+  };
+
   // Deduplicate active AudioRecord clients and map to friendly names
   const audioClientSeen = new Set<string>();
   const activeAudioClients: { uid: string; name: string; source: string }[] =
@@ -1657,7 +2509,7 @@ export async function parseBugReport(
     if (audioClientSeen.has(key)) continue;
     audioClientSeen.add(key);
     const sysMeta = SYSTEM_UID_NAMES[c.uid];
-    const pkg = uidToPkgMap.get(c.uid) || sysMeta?.pkg || c.uid;
+    const pkg = resolvePkgForUid(c.uid);
     const name = sysMeta ? sysMeta.name : friendlyAppName(pkg, c.uid);
     activeAudioClients.push({ uid: c.uid, name, source: c.source });
     if (!uidAudioSourceMap.has(c.uid)) uidAudioSourceMap.set(c.uid, c.source);
@@ -1671,8 +2523,8 @@ export async function parseBugReport(
       : rawUidPowers.slice(0, 12)
   ).map((u) => {
     const sysMeta = SYSTEM_UID_NAMES[u.uid];
-    const pkg = sysMeta?.pkg || uidToPkgMap.get(u.uid) || u.uid;
-    const isSystem = Boolean(sysMeta);
+    const pkg = resolvePkgForUid(u.uid);
+    const kind = resolveUidKind(u.uid, pkg);
     const wakeups = uidWakeupsMap.get(u.uid) ?? 0;
     const wlMatch = rawWakelocks.find((w) => w.uid === u.uid);
     const wakelockMs = Math.max(u.wakelockMs, wlMatch?.durationMs ?? 0);
@@ -1694,7 +2546,7 @@ export async function parseBugReport(
       id: `uid-${u.uid}`,
       name: sysMeta ? sysMeta.name : friendlyAppName(pkg, u.uid),
       packageName: pkg,
-      kind: isSystem ? "system" : "app",
+      kind,
       totalMah: Math.round(u.totalMah * 10) / 10,
       screenOffMah: u.screenOffMah,
       wakelockMs,
@@ -1756,9 +2608,11 @@ export async function parseBugReport(
     globalSubsystems.reduce((acc, s) => acc + s.unattributedMah, 0),
   );
 
+  const effectiveAwakeMs =
+    screenOffUptimeMs > 0 ? screenOffUptimeMs : partialWakelockMs;
   const awakeWhileScreenOffPct =
     screenOffMs > 0
-      ? Math.min(100, Math.round((partialWakelockMs / screenOffMs) * 100))
+      ? Math.min(100, Math.round((effectiveAwakeMs / screenOffMs) * 100))
       : 0;
   const activeRateMahPerHr =
     screenOnMs > 60_000
@@ -1784,14 +2638,18 @@ export async function parseBugReport(
       ramGb,
       storageGb,
       ufsLifetimeUsedPct,
+      profile,
     },
     health: {
       learnedMah: fallbackFullMah,
       designMah,
       healthPct,
+      stateOfHealthPct,
       lostMah,
       cycleCount,
       status: healthStatus,
+      chargingState,
+      batteryHealth,
       technology,
       verdict,
       levelPct,
@@ -1800,6 +2658,7 @@ export async function parseBugReport(
       tempC: Math.round(tempC * 10) / 10,
       chargingPolicy,
       manufacturedDate,
+      firstUseDate,
     },
     thermals: {
       overallStatus: overallThermalStatus,
@@ -1820,10 +2679,14 @@ export async function parseBugReport(
       screenOnMs,
       screenOnCount,
       screenOffMs,
+      screenOffUptimeMs,
+      deepDozeMs,
+      lightDozeMs,
       totalDischargeMah,
       screenOnDischargeMah,
       screenOffDischargeMah,
       deepDozeDischargeMah,
+      lightDozeDischargeMah,
       screenOnPctDrop,
       screenOffPctDrop,
       screenOnPctPerHr,
@@ -1835,6 +2698,28 @@ export async function parseBugReport(
       wifiTxGb,
       wifiRxMb,
       wifiPoorSignalPct,
+      wifiScanMs,
+      wifiScanPct,
+      wifiDisconnPct,
+      wifiSignal: {
+        great: Math.round(wifiSignal.great * 10) / 10,
+        good: Math.round(wifiSignal.good * 10) / 10,
+        moderate: Math.round(wifiSignal.moderate * 10) / 10,
+        poor: Math.round(wifiSignal.poor * 10) / 10,
+      },
+      cellularDrainMah: Math.round(cellularDrainMah),
+      cellularTx,
+      cellularRx,
+      cellularActiveMs,
+      cellularActivePct,
+      cellularSignal: {
+        great: Math.round(cellularSignal.great * 10) / 10,
+        good: Math.round(cellularSignal.good * 10) / 10,
+        moderate: Math.round(cellularSignal.moderate * 10) / 10,
+        poor: Math.round(cellularSignal.poor * 10) / 10,
+      },
+      gpsDrainMah: Math.round(gpsDrainMah * 10) / 10,
+      connectivityChanges,
       activeRateMahPerHr,
       idleRateMahPerHr,
       unattributedTotalMah,
