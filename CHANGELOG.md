@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.6-alpha (2026-11-23)
+
 - Fixed 3D rear camera horizontal mirroring across all Pixel, Samsung, Xiaomi, Honor, and generic chassis models, and renamed 3D angle presets to `Iso / Back / Front`.
 - Updated device profile validation badges & tooltips (**Verified Lab Rat**, **Close Enough**, and orange **Mystery Brick**).
 - Upgraded Android 11–16 bugreport parsing (ZIP entry priority ignoring `dumpstate_board.txt`, Qualcomm µA current normalization, relative-offset `Battery History (`, Android 11 `Uid` & interleaved hardware subsystems, and authoritative `package` UID lookup).
